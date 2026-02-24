@@ -20,6 +20,7 @@ Compile & Verify → Deploy & Benchmark → Feedback & Iterate
 | **db_sim** (synthetic DB) | `db_aware` | 79x max latency reduction (25.9ms → 0.33ms) |
 | **RocksDB db_bench** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction |
 | **RocksDB db_bench** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction, -3.6% throughput |
+| **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET), +15-20% throughput |
 
 See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution (v1→v7).
 
@@ -42,6 +43,10 @@ schedcp/
 │   │   ├── rocksdb_aware.bpf.c    # LLM-generated BPF scheduler (v6, asymmetric DSQ)
 │   │   ├── rocksdb_sched_bench.py # Automated benchmark script
 │   │   └── rocksdb/               # RocksDB source (cloned, db_bench built)
+│   ├── redis/                     # Redis cache workload
+│   │   ├── redis_aware.bpf.c      # LLM-generated BPF scheduler (dual DSQ)
+│   │   ├── redis_bench_compare.sh  # A/B benchmark script (CFS vs redis_aware)
+│   │   └── redis-src/              # Redis source (git submodule)
 │   ├── basic/                     # schbench latency benchmark
 │   ├── llama.cpp/                 # LLM inference workload
 │   └── cxl-micro/                 # Memory subsystem benchmark

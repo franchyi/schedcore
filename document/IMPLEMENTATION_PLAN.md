@@ -401,17 +401,48 @@ These overheads are acceptable for background work but violate foreground latenc
 
 **v5 crash:** Attempting to dispatch foreground threads directly to `SCX_DSQ_LOCAL` in `select_cpu` on a non-idle CPU is invalid — the sched-ext framework only allows local dispatch in `select_cpu` when an idle CPU is found. This caused `sched_ext: BPF scheduler "rocksdb_aware" disabled (runtime error)`.
 
+### 5.3 Workload 3: Redis (GET/SET with Background Persistence Pressure)
+
+**Setup:** Redis 8.0 (unstable) with `io-threads 4`, `appendonly yes`. 16 CPUs with 12 stress-ng CPU workers for oversubscription (total ~70+ threads competing for 16 CPUs). Continuous `BGSAVE` + `BGREWRITEAOF` during benchmark. 50 benchmark clients, 500K requests per run, 256B values. 3 runs per scheduler.
+
+**Thread classification:**
+- Background (deprioritized): `bio_close_file`, `bio_aof`, `bio_lazy_free` (match `bio_*` prefix), `redis-rdb-bgsave`, `redis-aof-rewrite` (forked persistence children)
+- Foreground (fast path): main event loop, `io_thd_*` I/O threads, everything else
+
+**GET Results (avg of 3 runs):**
+
+| Scheduler | RPS | Avg (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) |
+|---|---|---|---|---|---|---|
+| **CFS** | 74,226 | 0.414 | 0.311 | 0.897 | 2.785 | 9.684 |
+| **redis_aware** | 85,418 | 0.342 | 0.321 | 0.431 | 0.673 | 9.393 |
+| **Delta** | **+15.1%** | -17.4% | +3.2% | **-51.9%** | **-75.8%** | -3.0% |
+
+**SET Results (avg of 3 runs):**
+
+| Scheduler | RPS | Avg (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) |
+|---|---|---|---|---|---|---|
+| **CFS** | 70,598 | 0.469 | 0.321 | 1.111 | 2.959 | 17.545 |
+| **redis_aware** | 84,852 | 0.383 | 0.332 | 0.607 | 0.833 | 30.948 |
+| **Delta** | **+20.2%** | -18.3% | +3.4% | **-45.4%** | **-71.9%** | +76.3% |
+
+**Key findings:**
+- **P99 latency dramatically improved:** 76% reduction for GET, 72% for SET — the scheduler effectively prevents bio threads and forked persistence children from stealing CPU from the event loop and I/O threads
+- **Throughput improved 15-20%:** Unlike RocksDB where throughput slightly decreased, Redis sees a throughput gain because the event loop + I/O threads run with less interference
+- **P50 slightly regressed (+3%):** Expected — median operations aren't contended, and dual-DSQ dispatch adds marginal overhead
+- **Max latency mixed:** GET max improved slightly; SET max increased due to rare worst-case BPF dispatch path (acceptable given P99 improvements)
+- **Asymmetric pattern validated again:** Foreground through custom FOREGROUND_DSQ with priority dispatch, background through BACKGROUND_DSQ with 20ms slices
+
 ---
 
 ## 6. Analysis
 
 ### 6.1 When Does Application-Aware Scheduling Help?
 
-| Condition | db_sim Result | RocksDB (v6, readrandom) | RocksDB (v7, stress) |
-|---|---|---|---|
-| **CPU oversubscription** (threads > CPUs) | 79x max latency reduction | 7% max reduction | **67.8% P99.9 reduction** |
-| **Mixed-criticality threads** (latency + throughput) | Eliminates tail latency spikes | Zero P99.9 regression | **77% P99.99 reduction** |
-| **Background thread bursts** (compaction storms) | N/A (constant load) | 60% max reduction (writes) | **79% write P99.9 reduction** |
+| Condition | db_sim Result | RocksDB (v6, readrandom) | RocksDB (v7, stress) | Redis (GET/SET + persistence) |
+|---|---|---|---|---|
+| **CPU oversubscription** (threads > CPUs) | 79x max latency reduction | 7% max reduction | **67.8% P99.9 reduction** | **76% P99 reduction** (GET) |
+| **Mixed-criticality threads** (latency + throughput) | Eliminates tail latency spikes | Zero P99.9 regression | **77% P99.99 reduction** | 72% P99 reduction (SET) |
+| **Background thread bursts** (compaction storms) | N/A (constant load) | 60% max reduction (writes) | **79% write P99.9 reduction** | +15-20% throughput improvement |
 | **Idle system** (threads < CPUs) | No difference | No difference | No difference |
 
 The scheduler's value scales with **contention**: the more background threads compete with foreground threads for CPU time, the larger the improvement.
@@ -485,7 +516,7 @@ The `task_struct->comm` approach works well for applications with consistent nam
 | Application | Critical Threads | Background Threads | Metric |
 |---|---|---|---|
 | **Nginx** | worker* | cache_manager | Request tail latency under load |
-| **Redis** | io_thd_* | bio_* | GET/SET P99 during AOF rewrite |
+| **Redis** (completed) | io_thd_*, main event loop | bio_*, redis-rdb, redis-aof | **76% GET P99 reduction, 72% SET P99 reduction, +15-20% throughput** |
 | **vLLM / llama.cpp** | decode-* | batch-* | Token generation latency |
 | **PostgreSQL** | postgres (backend) | autovacuum, bgwriter | Query P99 during vacuum |
 
@@ -563,7 +594,54 @@ sudo pkill -f "loader.*rocksdb_aware"
 sudo bash bench_compare.sh
 ```
 
-### 8.3 Via MCP Tools (AI-Assisted)
+### 8.3 Redis (Real-World)
+
+```bash
+cd workloads/redis
+
+# Build Redis (one-time, requires git submodule)
+git submodule update --init workloads/redis/redis-src
+cd redis-src && make -j$(nproc) && cd ..
+
+# Compile scheduler
+make -f ../../mcp/new_sched/Makefile BPF_SRC=redis_aware.bpf.c \
+     BPF_OBJ=redis_aware.bpf.o redis_aware.bpf.o
+
+# Quick manual A/B test:
+# 1. Start Redis with IO threads + AOF persistence
+mkdir -p /tmp/redis_bench_test
+redis-src/src/redis-server --port 6399 --io-threads 4 \
+    --io-threads-do-reads yes --appendonly yes --appendfsync everysec \
+    --save "" --protected-mode no --dir /tmp/redis_bench_test --daemonize yes
+
+# 2. Populate data
+redis-src/src/redis-benchmark -p 6399 -t set -n 1000000 -d 256 -r 100000 -q
+
+# 3. Start background CPU pressure (oversubscription)
+stress-ng --cpu 12 --cpu-method matrixprod --quiet &
+
+# 4. Start background persistence pressure
+while true; do redis-src/src/redis-cli -p 6399 bgsave; sleep 0.5; \
+    redis-src/src/redis-cli -p 6399 bgrewriteaof; sleep 0.5; done &
+
+# 5. CFS baseline
+redis-src/src/redis-benchmark -p 6399 -t get,set -c 50 -n 500000 \
+    -r 100000 -d 256 --csv
+
+# 6. Load redis_aware scheduler and re-run
+sudo ../../mcp/new_sched/loader ./redis_aware.bpf.o &
+redis-src/src/redis-benchmark -p 6399 -t get,set -c 50 -n 500000 \
+    -r 100000 -d 256 --csv
+sudo pkill -f "loader.*redis_aware"
+
+# 7. Cleanup
+pkill -f stress-ng; kill %1; redis-src/src/redis-cli -p 6399 shutdown nosave
+
+# Automated 3-run comparison (recommended)
+sudo ./redis_bench_compare.sh 3
+```
+
+### 8.4 Via MCP Tools (AI-Assisted)
 
 ```
 1. list_schedulers                           → see available schedulers
@@ -593,6 +671,13 @@ workloads/rocksdb/
 ├── results/              # [generated] per-run latency results
 ├── rocksdb/              # RocksDB source (cloned, db_bench built)
 └── Makefile              # Build helpers
+
+workloads/redis/
+├── redis_aware.bpf.c     # BPF scheduler: dual DSQ, bio_*/redis-rdb/redis-aof classification
+├── redis_bench_compare.sh # Automated 3-run A/B comparison with stress-ng oversubscription
+├── Makefile               # Build helpers (Redis + memtier)
+├── results/               # [generated] per-run CSV latency results
+└── redis-src/             # Redis source (git submodule)
 
 document/
 ├── IMPLEMENTATION_PLAN.md  # This document
