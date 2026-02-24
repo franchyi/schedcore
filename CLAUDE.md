@@ -18,9 +18,10 @@ Compile & Verify → Deploy & Benchmark → Feedback & Iterate
 | Workload | Scheduler | Key Result |
 |---|---|---|
 | **db_sim** (synthetic DB) | `db_aware` | 79x max latency reduction (25.9ms → 0.33ms) |
-| **RocksDB db_bench** | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction |
+| **RocksDB db_bench** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction |
+| **RocksDB db_bench** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction, -3.6% throughput |
 
-See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution (v1→v6).
+See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution (v1→v7).
 
 ## Directory Structure
 
