@@ -21,8 +21,9 @@ Compile & Verify → Deploy & Benchmark → Feedback & Iterate
 | **RocksDB db_bench** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction |
 | **RocksDB db_bench** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction, -3.6% throughput |
 | **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET), +15-20% throughput |
+| **Nginx** (HTTP + CPU oversubscription) | `nginx_aware` v3 | **83% P99 reduction**, 87% P99.9 reduction, 0% throughput impact |
 
-See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution (v1→v7).
+See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution.
 
 ## Directory Structure
 
@@ -55,6 +56,10 @@ schedcp/
 │   │   ├── redis_aware.bpf.c      # LLM-generated BPF scheduler (dual DSQ)
 │   │   ├── redis_bench_compare.sh # A/B benchmark script (CFS vs redis_aware)
 │   │   └── redis-src/             # Redis source (git submodule)
+│   ├── nginx/                     # Nginx web server workload
+│   │   ├── nginx_aware.bpf.c      # LLM-generated BPF scheduler (asymmetric + task storage)
+│   │   ├── nginx_bench_compare.sh # Self-contained A/B benchmark (builds nginx + wrk2)
+│   │   └── nginx.conf             # Nginx config template (16 workers)
 │   └── schedcp_legacy/            # Original schedcp benchmark workloads
 │       ├── basic/                 # schbench latency benchmark
 │       ├── llama.cpp/             # LLM inference workload
@@ -215,6 +220,18 @@ rocksdb/db_bench --benchmarks=readrandom --db=/tmp/rocksdb_bench_test \
     --use_existing_db=1 --duration=30 --threads=16 \
     --max_background_compactions=16 --statistics=1 --histogram=1
 sudo pkill -f "loader.*rocksdb_aware"
+```
+
+### Nginx Experiment
+```bash
+cd workloads/nginx
+
+# Compile BPF scheduler
+make -f ../../mcp/new_sched/Makefile BPF_SRC=nginx_aware.bpf.c \
+     BPF_OBJ=nginx_aware.bpf.o nginx_aware.bpf.o
+
+# Automated A/B benchmark (builds nginx + wrk2 if needed, runs everything)
+sudo ./nginx_bench_compare.sh 3
 ```
 
 ### Via MCP Tools (AI-Assisted)
