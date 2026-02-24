@@ -5,13 +5,13 @@
 	path = /home/yunwei37/ai-os/workloads/basic/schbench
 	url = https://github.com/masoncl/schbench.git
 [submodule "workloads/basic/schbench"]
-	path = workloads/basic/schbench
+	path = workloads/schedcp_legacy/basic/schbench
 	url = https://github.com/masoncl/schbench
 [submodule "workloads/stress-ng"]
-	path = workloads/basic/stress-ng
+	path = workloads/schedcp_legacy/basic/stress-ng
 	url = https://github.com/ColinIanKing/stress-ng
 [submodule "workloads/cachyos-benchmarker"]
-	path = workloads/basic/cachyos-benchmarker
+	path = workloads/schedcp_legacy/basic/cachyos-benchmarker
 	url = https://github.com/CachyOS/cachyos-benchmarker
 [submodule "workloads/redis/redis-src"]
 	path = workloads/redis/redis-src
@@ -20,8 +20,8 @@
 	path = workloads/redis/archive/memtier_benchmark
 	url = https://github.com/RedisLabs/memtier_benchmark.git
 [submodule "workloads/nginx/nginx"]
-	path = workloads/nginx/nginx
+	path = workloads/schedcp_legacy/nginx/nginx
 	url = https://github.com/nginx/nginx.git
 [submodule "workloads/llama.cpp/llama.cpp"]
-	path = workloads/llama.cpp/llama.cpp
+	path = workloads/schedcp_legacy/llama.cpp/llama.cpp
 	url = https://github.com/eunomia-bpf/llama.cpp

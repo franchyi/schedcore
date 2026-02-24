@@ -1,171 +1,101 @@
-# SchedCP - Automatically Optimize Linux Scheduler with MCP Server
+# Application-Aware Kernel Scheduling via LLM-Driven Scheduler Synthesis
 
-> WIP: We are building a benchmark for evaluating the optimizations for OS!
+An LLM reads application source code, identifies thread roles (latency-critical vs. background), and automatically generates a custom BPF kernel scheduler via Linux [sched-ext](https://github.com/sched-ext/scx) — eliminating tail latency **without modifying the application**.
 
-SchedCP is an `experimental` project that enables AI optimization of Linux kernel schedulers using the sched-ext framework. It provides e2e automatic scheduler selection/synthesis, workload profiling, and performance optimization without any human intervention or guidance.
-
-Paper: [SchedCP: Towards Agentic OS](https://arxiv.org/abs/2509.01245)
-
-*The future is not just about letting AI write code for you; the AI agent should act as your system administrator, able to optimize anything for you automatically, without requiring any manual intervention!*
-
-It includes the following tools:
-
-- **autotune** - AI Agent-powered automatic OS optimization
-- **schedcp** - MCP server for scheduler management and generation
-
-## Demo
-
-Start optimize any workload with AI by simply run:
-
-```sh
-autotune/target/release/autotune cc "<your workload command>"
-# example for linux build
-autotune/target/release/autotune cc "make -C workloads/linux-build-bench/linux clean -j && make -C workloads/linux-build-bench/linux -j" 
-# example for schbench
-autotune/target/release/autotune cc  workloads/basic/schbench/schbench
+```
+Application Source Code → LLM Analysis → BPF Scheduler Generation →
+Compile & Verify → Deploy & Benchmark → Feedback & Iterate
 ```
 
-Allow LLM Agent to auto select and config the best scheduler:
+## The Problem
 
-![document/schbench-optimize.gif](https://github.com/eunomia-bpf/schedcp/blob/master/document/schbench-optimize.gif?raw=true)
+The Linux CFS/EEVDF scheduler treats all threads equally within a cgroup. It cannot distinguish between a latency-critical query thread and a CPU-heavy background compaction thread in the same application. When background threads compete with foreground threads for CPU time, tail latency spikes.
 
-Allow LLM Agents to write new schedulers:
+This is a **semantic gap**: the kernel has scheduling mechanisms (priorities, queues, preemption) but lacks the application knowledge to use them correctly.
 
-## Features & design
+## The Solution
 
-- Automatic workload profiling
-- Automatic scheduler selection based on workload characteristics
-- Performance tracking across different schedulers
-- Real-time scheduler management and generation
+An LLM bridges this gap by:
+1. Reading application source code to identify thread roles and naming conventions
+2. Generating a BPF scheduler that classifies threads by `task_struct->comm` (thread name)
+3. Using sched-ext Dispatch Queues (DSQs) to prioritize latency-sensitive threads
+4. Iterating on the scheduler design based on benchmark feedback
 
-![document/design.png](https://github.com/eunomia-bpf/schedcp/blob/master/document/design.png?raw=true)
+No application changes required. No manual configuration. The LLM is the scheduler author.
 
-The current MCP tools include:
+## Key Results
 
-- **list_schedulers** - Get detailed information about all available schedulers
-- **run_scheduler** - Start schedulers with custom configurations
-- **stop_scheduler** - Stop running scheduler instances
-- **get_execution_status** - Monitor scheduler performance and output
-- **create_and_verify_scheduler** - Create custom BPF schedulers from source code
-- **system_monitor** - Collect real-time CPU, memory, and scheduler metrics
-- **workload** - Manage workload profiles and execution history
+| Workload | Scheduler | Key Result | Throughput Impact |
+|---|---|---|---|
+| **db_sim** (synthetic DB) | `db_aware` | 79x max latency reduction (25.9ms → 0.33ms) | Neutral |
+| **RocksDB** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction | Neutral |
+| **RocksDB** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction | -3.6% |
+| **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET) | +15-20% |
 
-## Installation
+## Key Finding: The Asymmetric Design Principle
 
-### Requirements
+Through iterating on the RocksDB scheduler (v1→v7), we discovered:
 
-- Linux kernel 6.12+ with sched-ext support  
-- Rust toolchain
+> **Only intervene in scheduling of threads you want to deprioritize. Let high-priority threads use the default fast path.**
 
-The major dependencies are the dependencies for the sched-ext framework. You can check the [github.com/sched-ext/scx](https://github.com/sched-ext/scx) for more details.
+Routing foreground threads through a custom DSQ adds BPF dispatch overhead that hurts P99.9 latency. The correct approach: push background threads into a deprioritized custom DSQ and let the framework handle foreground threads natively.
 
-You also need to install the deps for the workloads you want to optimize.
+## Repository Structure
 
-### Build
-
-```bash
-# Clone with submodules
-git clone https://github.com/eunomia-bpf/schedcp
-cd schedcp
-git submodule update --init --recursive scheduler/scx
-
-# Build schedulers
-cd scheduler && make && make install && cd ..
-# Build autotune
-cd autotune && cargo build --release && cd ..
-# Build MCP server
-cd mcp && cargo build --release && cd ..
 ```
+workloads/
+├── db_sim/              # Synthetic DB workload + db_aware BPF scheduler
+├── rocksdb/             # RocksDB workload + rocksdb_aware BPF scheduler
+├── redis/               # Redis workload + redis_aware BPF scheduler
+└── schedcp_legacy/      # Original schedcp benchmark workloads
 
-## Documentation
+document/
+├── IMPLEMENTATION_PLAN.md   # Full research plan, design evolution (v1→v7), all results
+└── schedcp/                 # Original schedcp infrastructure docs
 
-### User Guides
-
-- **[USAGE_GUIDE.md](document/USAGE_GUIDE.md)** - Complete guide on how to use schedulers
-  - Installation and setup
-  - Using schedulers with CLI, MCP server, and autotune
-  - Understanding scheduler selection
-  - Troubleshooting
-
-- **[PROJECT_STRUCTURE.md](document/PROJECT_STRUCTURE.md)** - Detailed project organization
-  - Component overview and responsibilities
-  - Directory structure and file locations
-  - Data flow and integration points
-  - Build system architecture
-
-- **[AI_AGENTS.md](document/AI_AGENTS.md)** - AI agent implementation
-  - How observation, planning, execution, and learning agents work
-  - MCP tools and agent capabilities
-  - Example optimization workflows
-  - Integration with Claude and other AI systems
-
-### Design Documents
-
-- **[sched-agent-design.md](document/sched-agent-design.md)** - Multi-agent framework design
-- **[schedcp-design.md](document/schedcp-design.md)** - System control plane architecture
-- **Research Paper**: [SchedCP: Towards Agentic OS](https://arxiv.org/abs/2509.01245)
+mcp/                     # MCP server (scheduler compilation, deployment, monitoring)
+scheduler/               # sched-ext framework and built-in scheduler binaries
+autotune/                # Auto-tuning daemon
+```
 
 ## Quick Start
 
-**You should run the claude-code on project root directory.**
+### Prerequisites
 
-### Autotune (Recommended)
+- Linux kernel 6.12+ with sched-ext support
+- Clang/LLVM >= 16 (17 recommended)
+- Root privileges for scheduler loading
 
-```bash
-# Set sudo password
-export SCHEDCP_SUDO_PASSWORD="your_password"
-
-# Optimize any workload
-./autotune/target/release/autotune cc "<your workload command>"
-```
-
-### MCP Server
-
-check the [.mcp.json](https://github.com/eunomia-bpf/schedcp/blob/master/.mcp.json) for more details. You can just open the claude-code on the 
-
-### CLI Tool
+### Build Infrastructure
 
 ```bash
-export SCHEDCP_SUDO_PASSWORD="your_password"
-
-# List schedulers
-./mcp/target/release/schedcp-cli list
-
-# Run a scheduler
-./mcp/target/release/schedcp-cli run scx_rusty --sudo
-
-# Monitor system metrics
-./mcp/target/release/schedcp-cli monitor
+git submodule update --init --recursive scheduler/scx
+cd scheduler && make && make install && cd ..
+cd mcp && cargo build --release && cd ..
 ```
 
-For detailed usage instructions, see [USAGE_GUIDE.md](document/USAGE_GUIDE.md).
+### Run an Experiment (db_sim example)
 
-## Artifact from Paper
+```bash
+cd workloads/db_sim && make
 
-Artifact for reproducing results from **"Towards Agentic OS: An LLM Agent Framework for Linux Schedulers"** (arXiv:2509.01245).
+# CFS baseline (32 threads on 16 CPUs — oversubscribed)
+./db_sim -q 8 -c 24 -d 15
 
-### Evaluation Workloads
+# With LLM-generated scheduler
+sudo ../../mcp/new_sched/loader ./db_aware.bpf.o &
+./db_sim -q 8 -c 24 -d 15
+sudo pkill -f "loader.*db_aware"
+```
 
-#### 1. **Linux Kernel Build**
-- **Location**: [`workloads/linux-build-bench/`](workloads/linux-build-bench/)
-- **Run**: `autotune/target/release/autotune cc "make -C workloads/linux-build-bench/linux -j"`
+See [IMPLEMENTATION_PLAN.md](document/IMPLEMENTATION_PLAN.md) for full experiment details, design evolution, and all results.
 
-#### 2. **schbench**
-- **Location**: [`workloads/basic/schbench_test/`](workloads/basic/schbench_test/)
-- **Run**: `autotune/target/release/autotune cc "workloads/basic/schbench/schbench"`
+## Built On
 
-#### 3. **Batch Workloads**
-- **Location**: [`workloads/processing/`](workloads/processing/)
-- **Run**: See [`workloads/processing/README.md`](workloads/processing/README.md). The schedulers there are already generated by Claude Code. The original version was letting Claude Code generate them first and run the workloads with benchmarks mannually.
-    - Workloads: [workloads/processing/assets](workloads/processing/assets/)
-    - Prompt and testcases: [workloads/processing/scripts](workloads/processing/scripts)
-    - Generated schedulers: [workloads/processing/schedulers](workloads/processing/schedulers)
+This project builds on [**schedcp**](https://github.com/eunomia-bpf/schedcp) — an MCP server for AI-driven Linux scheduler management. schedcp provides the infrastructure layer: scheduler compilation, deployment, monitoring, and workload profiling. See [document/schedcp/](document/schedcp/) for the original schedcp documentation.
 
-## Related Projects
-
-- [sched-ext](https://github.com/sched-ext/scx) - Linux kernel BPF scheduler framework
-- [Model Context Protocol](https://modelcontextprotocol.io/) - AI-application integration protocol
+Paper: [SchedCP: Towards Agentic OS](https://arxiv.org/abs/2509.01245)
 
 ## License
 
-See [LICENSE](https://github.com/eunomia-bpf/schedcp/blob/master/LICENSE) for details.
+See [LICENSE](LICENSE) for details.

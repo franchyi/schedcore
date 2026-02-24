@@ -31,7 +31,15 @@ schedcp/
 ├── CLAUDE.md                      # This file
 ├── document/
 │   ├── IMPLEMENTATION_PLAN.md     # Full research plan, design, and results
-│   └── CLAUDE_ORIGINAL.md         # Original schedcp CLAUDE.md (infrastructure reference)
+│   ├── CLAUDE_ORIGINAL.md         # Original schedcp CLAUDE.md (infrastructure reference)
+│   ├── 2509.01245v2.pdf/txt       # Research paper
+│   └── schedcp/                   # Original schedcp infrastructure docs
+│       ├── AI_AGENTS.md, USAGE_GUIDE.md, PROJECT_STRUCTURE.md
+│       ├── schedcp-design.md, sched-agent-design.md, devlog.md
+│       ├── design.png, linux.gif, schbench-optimize.gif
+│       ├── devlog/                # Development logs
+│       ├── motivation_exp/        # Motivation experiments
+│       └── scx/                   # sched-ext documentation
 │
 ├── workloads/                     # Application workloads and custom schedulers
 │   ├── db_sim/                    # Synthetic DB workload (controlled experiment)
@@ -45,11 +53,13 @@ schedcp/
 │   │   └── rocksdb/               # RocksDB source (cloned, db_bench built)
 │   ├── redis/                     # Redis cache workload
 │   │   ├── redis_aware.bpf.c      # LLM-generated BPF scheduler (dual DSQ)
-│   │   ├── redis_bench_compare.sh  # A/B benchmark script (CFS vs redis_aware)
-│   │   └── redis-src/              # Redis source (git submodule)
-│   ├── basic/                     # schbench latency benchmark
-│   ├── llama.cpp/                 # LLM inference workload
-│   └── cxl-micro/                 # Memory subsystem benchmark
+│   │   ├── redis_bench_compare.sh # A/B benchmark script (CFS vs redis_aware)
+│   │   └── redis-src/             # Redis source (git submodule)
+│   └── schedcp_legacy/            # Original schedcp benchmark workloads
+│       ├── basic/                 # schbench latency benchmark
+│       ├── llama.cpp/             # LLM inference workload
+│       ├── cxl-micro/             # Memory subsystem benchmark
+│       └── ...                    # nginx, faiss, pytorch, vllm, etc.
 │
 ├── mcp/                           # MCP server (scheduler management infrastructure)
 │   ├── src/
