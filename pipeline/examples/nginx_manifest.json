@@ -1,0 +1,34 @@
+{
+  "application": "nginx",
+  "source_path": "workloads/nginx/nginx-work/",
+  "language": "c",
+  "identification_method": "comm",
+  "default_role": "foreground",
+  "rationale": "Nginx uses a multi-process architecture with a master process and multiple worker processes, all sharing the 'nginx' comm name. In a CPU-oversubscribed environment (e.g., co-located with CPU-intensive batch jobs like stress-ng), nginx worker processes compete for CPU time with CPU hog processes. Deprioritizing known CPU hog processes (stress-ng) ensures nginx workers get scheduled promptly, reducing P99 request latency without starving background compute (which is throughput-oriented, not latency-sensitive).",
+  "threads": [
+    {
+      "name_pattern": "nginx",
+      "role": "foreground",
+      "purpose": "Nginx master and worker processes. Workers handle HTTP request processing via an event-driven model. Each worker serves thousands of concurrent connections. Latency-critical — scheduling delays directly increase HTTP response time.",
+      "identification": {
+        "type": "comm_exact",
+        "comm_prefix": "nginx",
+        "comm_length": 5,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "stress-ng*",
+      "role": "background",
+      "purpose": "CPU-intensive batch workload co-located with nginx. Represents any CPU hog process that competes with nginx for CPU time. Not part of nginx itself but must be deprioritized to protect nginx latency.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "stress-ng",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}

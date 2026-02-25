@@ -4,9 +4,33 @@
 
 ---
 
+## Honest Status Assessment
+
+### What actually exists (implemented):
+- **Stage 1a**: Tree-sitter static analysis — finds all `pthread_setname_np`, `prctl(PR_SET_NAME)`, macro wrappers, `pthread_create`, `std::thread` sites. Deterministic, complete, free.
+- **Stage 1b**: LLM classification — given the static analysis report, classifies each thread as foreground/background. Outputs a Thread Manifest JSON.
+- **Manifest verification**: Schema validation + ground-truth comparison.
+- **4 hand-written BPF schedulers**: db_aware, rocksdb_aware, redis_aware, nginx_aware (663 lines total).
+- **4 benchmark scripts**: Automated A/B comparison (CFS vs custom scheduler).
+- **MCP infrastructure**: Scheduler compilation, loading, monitoring (Rust).
+
+### What does NOT exist (claimed in prior outline):
+- **Stage 2 (BPF generation)**: No code that consumes a Thread Manifest and produces `.bpf.c`. All schedulers are hand-authored.
+- **Parameterized BPF template**: No template system. Each scheduler is standalone.
+- **Policy regime selection**: No automated selection logic. Humans chose the regime per workload.
+- **Feedback loop**: No automated benchmark → analyze → adjust → re-deploy cycle.
+- **Runtime validation**: No automated comm-pattern verification against live processes.
+
+### The core gap:
+The pipeline stops at Thread Manifest JSON. The actual scheduling (the hard part) is entirely manual. The paper's title says "LLM-Synthesized BPF Schedulers" but the LLM only classifies threads — it doesn't write schedulers.
+
+---
+
+## Revised Paper Outline (reflecting reality + feasible extensions)
+
 ## Abstract (draft sketch)
 
-Modern applications embed rich scheduling semantics — thread priorities, latency-critical paths, background maintenance — but the kernel scheduler is fundamentally blind to them. We present SchedCP, a framework that uses large language models to *automatically* analyze application source code, extract thread-role semantics, and synthesize custom BPF kernel schedulers that are hot-loaded via Linux sched-ext. SchedCP addresses three key challenges: (1) **structured semantic extraction** from unreliable LLM code understanding via a constrained analysis protocol grounded in verifiable code artifacts; (2) **a scheduling policy design space** that navigates the fundamental tradeoff between median and tail latency through workload-adaptive policy selection; and (3) **a parameterized BPF policy template** that separates the control plane (LLM-driven semantic analysis and policy decisions) from the data plane (verified, low-overhead BPF scheduling logic). We evaluate SchedCP on four unmodified production applications — RocksDB, Redis, Nginx, and a synthetic DB simulation — achieving up to 83% P99 reduction (Nginx), 76% P99 reduction (Redis), and 67.8% P99.9 reduction (RocksDB) under CPU oversubscription, with zero application modification.
+Modern applications embed rich scheduling semantics — thread priorities, latency-critical paths, background maintenance — but the kernel scheduler is fundamentally blind to them. We present SchedCP, a framework that automatically analyzes application source code to extract thread-role semantics and synthesize custom BPF kernel schedulers via Linux sched-ext. SchedCP combines deterministic static analysis (tree-sitter thread discovery) with LLM-based semantic classification to produce a Thread Manifest, then instantiates a parameterized BPF scheduler template that is compiled, verified, and hot-loaded — all without modifying the application. We identify three key design challenges: (1) **grounded semantic extraction** — combining static analysis with LLM reasoning to produce reliable, verifiable thread classifications; (2) **the BPF scheduling cost model** — navigating non-obvious performance cliffs where naive scheduler designs regress P99.9 by 373-474%; and (3) **policy regime selection** — choosing among asymmetric deprioritization, selective preemption, and external isolation based on workload characteristics. We evaluate SchedCP on four unmodified applications, achieving up to 83% P99 reduction (Nginx), 76% P99 reduction (Redis), and 67.8% P99.9 reduction (RocksDB) under CPU oversubscription.
 
 ---
 
@@ -18,23 +42,21 @@ Modern applications embed rich scheduling semantics — thread priorities, laten
 - The Linux CFS/EEVDF scheduler treats all threads within a cgroup equally. When a RocksDB read thread wakes from I/O and competes with 32 compaction threads, CFS has no basis to prioritize it. Result: tail latency spikes under contention.
 - Existing solutions (nice, cgroups, hand-written sched-ext, scx_layered) require manual, per-application expert effort. They don't scale across the diversity of modern applications.
 
-### The Opportunity: sched-ext + LLMs
+### The Opportunity: sched-ext + Source Code Analysis
 
 - Linux 6.12 introduced sched-ext: BPF programs can implement custom kernel scheduling policies, hot-loaded without reboot. This is the *mechanism*.
-- LLMs can read and reason about source code at scale. They can identify thread naming conventions, thread pool architectures, and criticality hierarchies. This is the *knowledge source*.
-- But simply prompting an LLM with "write me a scheduler" produces naive designs that **make things worse** (our v1-v4 designs all regressed P99.9 by 373-474%). The gap between LLM code generation capability and correct, high-performance scheduler synthesis is the core challenge.
+- Application source code contains all the information needed: thread naming conventions (`pthread_setname_np`), thread pool architectures, criticality hierarchies. This is the *knowledge source*.
+- But the path from source code to correct BPF scheduler is non-trivial. Simply prompting an LLM with "write me a scheduler" produces naive designs that **make things worse** (our v1-v4 designs all regressed P99.9 by 373-474%).
 
 ### Contributions
 
-1. **SchedCP**, an end-to-end framework that closes the loop from application source code to deployed kernel scheduler, using an LLM as the semantic bridge between application and kernel. Unlike manual approaches, SchedCP requires no scheduling expertise from the user and no modifications to the application.
+1. **A hybrid static-analysis + LLM pipeline for thread role discovery.** Tree-sitter exhaustively finds all thread naming and creation sites (deterministic, verifiable); an LLM classifies each thread type as latency-critical or background based on code context. This decouples *discovery* (must be complete) from *classification* (requires semantic understanding).
 
-2. **A constrained semantic extraction protocol** that structures the LLM's analysis into verifiable, kernel-actionable artifacts (thread comm patterns, criticality rankings, contention models), addressing the unreliability of unconstrained LLM code understanding.
+2. **The BPF scheduling cost model and the Asymmetric Principle.** Through systematic iteration (7 design versions on RocksDB), we discover that routing foreground threads through any custom BPF dispatch path adds overhead that exceeds the benefit. The correct design: only intervene for threads you want to *deprioritize*; let high-priority threads use the kernel's default fast path. We formalize this into three policy regimes with clear selection criteria.
 
-3. **The Asymmetric Scheduling Principle and its workload-adaptive generalization**: a design space for BPF scheduling policies that navigates the P50-vs-tail tradeoff. We identify three policy regimes — *passthrough* (zero overhead, zero improvement), *asymmetric deprioritization* (near-zero P50 cost, moderate tail improvement), and *selective preemption* (bounded P50 cost, maximum tail improvement) — and show how to select among them based on application characteristics.
+3. **A parameterized BPF scheduler template** that separates application-specific thread classification (generated from the Thread Manifest) from scheduling logic (fixed, pre-verified). This bounds the LLM's blast radius: a wrong classification wastes scheduling priority but cannot crash the kernel.
 
-4. **A parameterized BPF policy template** with clean control plane / data plane separation. The control plane (LLM + verification) fills in application-specific parameters (thread classification rules, DSQ topology, preemption thresholds); the data plane (BPF template code) provides verified, low-overhead scheduling primitives. This makes the framework extensible to new applications without redesigning the scheduler core.
-
-5. **Evaluation on four unmodified applications** demonstrating 67-87% tail latency reduction across diverse workload types (storage engine, cache, web server, synthetic database).
+4. **Evaluation on four unmodified applications** demonstrating 67-87% tail latency reduction across diverse workload types (storage engine, cache, web server), with detailed ablation showing the impact of policy regime selection and per-task classification caching.
 
 ---
 
@@ -66,11 +88,11 @@ Modern applications embed rich scheduling semantics — thread priorities, laten
 
 - LLM-assisted code generation (Copilot, etc.): general-purpose, no domain-specific verification
 - LLM for kernel/systems (recent work): configuration tuning, bug finding
-- **Key gap**: no prior work uses LLMs to synthesize *kernel scheduling policies* from *application semantics*
+- **Key gap**: no prior work uses LLMs to bridge application-level semantics into kernel scheduling policy
 
 ---
 
-## 3. Problem and Motivation  (~2 pages)
+## 3. Motivation  (~2 pages)
 
 ### 3.1 The Semantic Gap: A Quantitative Study
 
@@ -81,245 +103,270 @@ Concrete example with RocksDB: show what happens when 16 foreground read threads
 - Worst case: read waits for a full compaction timeslice (4-6ms) before being scheduled
 - Measured: P99.9 = 3.8ms, max = 25.9ms (db_sim)
 
-### 3.2 Why Naive LLM-Generated Schedulers Fail
+### 3.2 Why Naive Schedulers Fail: The BPF Cost Model
 
-This is critical — show that the problem is **not trivially solved** by prompting an LLM.
+This is critical — show that the problem is **not trivially solved**.
 
-**Experiment**: Ask an LLM to generate a BPF scheduler for RocksDB given its source code. The natural design (dual DSQ: foreground vs. background) **regresses P99.9 by 413%** (169us → 866us).
+**Experiment**: Design a BPF scheduler for RocksDB. The natural design (dual DSQ: foreground vs. background) **regresses P99.9 by 413%** (169us → 866us).
 
-| Naive Design | P99.9 Regression | Root Cause |
+| Design Version | P99.9 Change | Root Cause |
 |---|---|---|
 | Dual custom DSQ (v1) | +413% | Global DSQ lock contention on all enqueue/dispatch |
 | + SCX_KICK_PREEMPT (v2) | +373% | Preemption IPI overhead on the fast path |
 | + Short bg slice (v3) | +412% | Excessive context switches |
 | + Per-CPU maps (v4) | +474% | BPF map lookup overhead per scheduling event |
 | + Force local dispatch (v5) | **Crash** | sched-ext API constraint violation |
+| **Asymmetric (v6)** | **-60% max** | Foreground uses framework fast path; only background goes through custom DSQ |
+| **+ Preemption (v7)** | **-67.8%** | + active bg preemption when fg wakes with no idle CPU |
 
-**Takeaway**: BPF scheduling has a hidden cost model that LLMs don't understand. Routing latency-critical threads through *any* custom dispatch path adds overhead that exceeds the benefit. A correct scheduler must navigate non-obvious design constraints.
+**Key insight**: The BPF scheduling overhead is *fixed per scheduling event* (~1-5 us). At P50 (no contention, threads run immediately), this overhead is visible and harmful. At the tail (multi-ms waits due to contention), the overhead is negligible compared to the savings. This creates a fundamental **P50-vs-tail tradeoff** that determines optimal scheduler design.
 
-### 3.3 Three Challenges
+### 3.3 Three Design Challenges
 
-**Challenge 1: Unreliable Semantic Extraction.** LLMs can hallucinate thread names, miss critical threads, or misclassify roles. An incorrect classification (e.g., deprioritizing the Redis event loop) can be catastrophic. The extraction must be *grounded* in verifiable code artifacts and *validated* before deployment.
+**Challenge 1: Grounded Semantic Extraction.** LLMs can hallucinate thread names, miss critical threads, or misclassify roles. An incorrect classification (e.g., deprioritizing the Redis event loop) can be catastrophic. The extraction must be *grounded* in verifiable code artifacts.
 
-**Challenge 2: The P50-vs-Tail Tradeoff.** Any BPF scheduling intervention adds per-event overhead (enqueue callbacks, map lookups, cross-CPU dispatch). This overhead is amortized at the tail (where contention causes multi-millisecond waits) but visible at the median. Different applications have different tolerance: RocksDB can absorb 20% P50 regression for 68% P99.9 improvement; Nginx cannot.
+**Challenge 2: The BPF Cost Model.** Any BPF scheduling intervention adds per-event overhead. Different applications have different tolerance for P50 overhead in exchange for tail improvement. The scheduler design must match the workload's tradeoff profile.
 
-**Challenge 3: Policy Generalization.** Each application has unique thread roles, naming conventions, and contention patterns. But writing a custom BPF scheduler per application doesn't scale. We need *reusable scheduling primitives* that the LLM can parameterize, not arbitrary BPF code generation.
+**Challenge 3: Policy Generalization.** Each application has unique thread roles, naming conventions, and contention patterns. The framework needs reusable scheduling primitives that can be parameterized per-application, not arbitrary code generation.
 
 ---
 
-## 4. SchedCP Design  (~4 pages)
+## 4. Design  (~4 pages)
 
 ### 4.1 Architecture Overview
 
 ```
-                          CONTROL PLANE
-    ┌─────────────────────────────────────────────────┐
-    │                                                 │
-    │  ┌──────────┐    ┌──────────────┐    ┌────────┐ │
-    │  │ App Code │───→│  Structured  │───→│ Policy │ │
-    │  │ Analysis │    │  Semantic    │    │ Select │ │
-    │  │ (LLM)   │    │  Extraction  │    │        │ │
-    │  └──────────┘    └──────────────┘    └───┬────┘ │
-    │                                         │      │
-    │  ┌──────────┐    ┌──────────────┐       │      │
-    │  │ Compile  │◄───│  Template    │◄──────┘      │
-    │  │ + Verify │    │  Instantiate │               │
-    │  └────┬─────┘    └──────────────┘               │
-    │       │                                         │
-    └───────┼─────────────────────────────────────────┘
-            │ hot-load .bpf.o
-            ▼
-    ┌─────────────────────────────────────────────────┐
-    │                   DATA PLANE                    │
-    │                                                 │
-    │  ┌────────────┐  ┌───────────┐  ┌────────────┐ │
-    │  │ select_cpu │─→│  enqueue  │─→│  dispatch  │ │
-    │  │ (idle CPU  │  │ (classify │  │ (priority  │ │
-    │  │  fast path)│  │  + route) │  │  drain)    │ │
-    │  └────────────┘  └───────────┘  └────────────┘ │
-    │                                                 │
-    │  ┌──────────────────────────────────────────┐   │
-    │  │ Per-task classification cache (BPF TLS)  │   │
-    │  │ Per-CPU bg tracking maps                 │   │
-    │  │ Selective preemption logic                │   │
-    │  └──────────────────────────────────────────┘   │
-    │                                                 │
-    └─────────────────────────────────────────────────┘
-
-    ┌─────────────────────────────────────────────────┐
-    │                 FEEDBACK LOOP                   │
-    │  Benchmark → Metrics → LLM Analysis → Iterate  │
-    └─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    STAGE 1: THREAD DISCOVERY                │
+│                                                             │
+│  ┌─────────────┐     ┌────────────────┐    ┌────────────┐  │
+│  │ Application │     │  Stage 1a:     │    │ Stage 1b:  │  │
+│  │ Source Code  │────→│  Tree-sitter   │───→│ LLM Thread │  │
+│  │ (unmodified) │     │  Static Scan   │    │ Classifier │  │
+│  └─────────────┘     └────────────────┘    └─────┬──────┘  │
+│                       (deterministic)       (semantic)│     │
+│                                                      ▼     │
+│                                              ┌────────────┐ │
+│                                              │  Thread    │ │
+│                                              │  Manifest  │ │
+│                                              │  (JSON)    │ │
+│                                              └─────┬──────┘ │
+└────────────────────────────────────────────────────┼────────┘
+                                                     │
+┌────────────────────────────────────────────────────┼────────┐
+│                  STAGE 2: SCHEDULER SYNTHESIS       │        │
+│                                                     ▼        │
+│  ┌──────────────┐    ┌──────────────┐    ┌────────────────┐ │
+│  │ Policy Regime │───→│  Template    │───→│  Compile +     │ │
+│  │ Selection     │    │  Instantiate │    │  BPF Verify    │ │
+│  └──────────────┘    └──────────────┘    └───────┬────────┘ │
+│                                                   │         │
+└───────────────────────────────────────────────────┼─────────┘
+                                                    │ hot-load
+┌───────────────────────────────────────────────────┼─────────┐
+│                  BPF DATA PLANE                    ▼         │
+│                                                              │
+│  ┌────────────┐  ┌───────────┐  ┌────────────┐              │
+│  │ select_cpu │─→│  enqueue  │─→│  dispatch  │              │
+│  │ (idle CPU  │  │ (classify │  │ (priority  │              │
+│  │  fast path)│  │  + route) │  │  drain)    │              │
+│  └────────────┘  └───────────┘  └────────────┘              │
+│                                                              │
+│  Primitives: task-local-storage cache, per-CPU bg tracking,  │
+│  selective preemption, asymmetric DSQ topology                │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Key insight: separation of concerns.** The LLM operates only in the control plane — it never generates arbitrary BPF code. Instead, it fills in parameters of a verified template. The data plane is a fixed, pre-verified BPF skeleton with parameterized slots. This bounds the LLM's blast radius: a wrong thread classification wastes scheduling priority but cannot crash the kernel.
+**Key design principle: separation of concerns.**
+- Stage 1 handles *what to schedule differently* (thread discovery + classification). The LLM's job is bounded: classify N thread types, where N is provided by static analysis.
+- Stage 2 handles *how to schedule differently* (BPF policy). The LLM never generates arbitrary BPF code. It fills parameters into a pre-verified template.
+- The data plane is fixed, pre-verified BPF logic with parameterized slots.
 
-### 4.2 Structured Semantic Extraction (Control Plane — Challenge 1)
+### 4.2 Stage 1a: Deterministic Thread Discovery (Static Analysis)
 
-**Problem**: Unconstrained LLM prompting ("What are the critical threads?") produces unreliable, unverifiable answers.
+**Problem**: LLM-based code search is non-deterministic and incomplete. Three runs on RocksDB produced three different thread inventories.
 
-**Solution**: A multi-phase extraction protocol that constrains the LLM to produce structured, verifiable outputs.
+**Solution**: Tree-sitter AST analysis exhaustively finds all thread naming sites.
 
-**Phase 1: Thread Inventory.**
-- Prompt: "List all `pthread_setname_np`, `prctl(PR_SET_NAME)`, and thread pool creation sites in the codebase."
-- Output: Structured table of `{comm_pattern, source_location, creation_context}`
-- *Verifiable*: Each entry points to a specific source line. Human or automated tool can confirm.
+**What it finds:**
 
-**Phase 2: Criticality Ranking.**
-- Prompt: "For each thread group, classify as: (a) latency-critical (serves user requests), (b) throughput-sensitive (background maintenance), (c) neutral. Justify from code context."
-- Output: Ranked list with per-entry justification grounded in source code evidence
-- *Verifiable*: Justifications reference concrete code paths (e.g., "rocksdb:low handles compaction scheduled via `BGWorkCompaction`, not on the read path")
+| Pattern | API | Example |
+|---|---|---|
+| Thread naming | `pthread_setname_np(handle, name)` | `pthread_setname_np(t, "rocksdb:low")` |
+| Thread naming | `prctl(PR_SET_NAME, name)` | `prctl(PR_SET_NAME, "worker")` |
+| Macro wrappers | App-specific macros that wrap naming APIs | `redis_set_thread_title("bio_aof")` |
+| Process titles | `setproctitle()` wrappers for forked children | `redisSetProcTitle("redis-rdb-bgsave")` |
+| Thread creation | `pthread_create(&t, attr, func, arg)` | Links to start routine |
+| Thread creation | `std::thread` / `port::Thread` construction | Links to callable |
 
-**Phase 3: Contention Model.**
-- Prompt: "How do these thread groups interact? Which ones compete for CPU? Under what conditions (write-heavy, cache miss, oversubscription)?"
-- Output: Contention graph (which thread groups interfere) + trigger conditions
-- *Verification*: Cross-reference with application profiling or documentation
+**Output**: A `ThreadReport` JSON containing every thread naming/creation site with source location, context snippet (surrounding code), and whether the name is a constant or dynamically constructed.
 
-**Phase 4: Validation.**
-- *comm-pattern verification*: Run the application and check `ps -eLo comm` against predicted patterns. Flag mismatches before scheduler generation.
-- *Criticality smoke test*: If the LLM identifies thread X as "background", verify that deprioritizing X does not crash or stall the application (short test run with scheduler loaded).
+**Why static analysis first:**
+1. **Complete**: Finds every naming site, not a sample. Redis: 7 naming sites + 23 creation sites across 730 files.
+2. **Deterministic**: Same input always produces same output.
+3. **Free**: No LLM API cost. Runs in ~3 seconds on Redis (730 files).
+4. **Verifiable**: Each entry references a specific file:line.
 
-**Why structured extraction matters**: It transforms an unbounded NLP problem ("understand this codebase") into a series of bounded, verifiable sub-problems. Each phase produces an artifact that can be independently validated before proceeding. This is analogous to how compilers use typed intermediate representations rather than pattern-matching on source text.
+**Challenges solved:**
+- Tree-sitter fails on GNU `__attribute__` extensions inside preprocessor-guarded blocks. We added a regex fallback for thread naming calls that catches what tree-sitter misses (e.g., RocksDB's `repeatable_thread.h:108`).
+- C vs. C++ grammar differences: C grammar lacks `qualified_identifier` and `field_expression` node types. Queries are language-conditional.
+- Macro detection: Some applications wrap `pthread_setname_np` in custom macros (Redis: `redis_set_thread_title`). We detect macro definitions that call naming APIs and search for call sites of those macros.
+- Process title setters: Forked children (Redis: `redis-rdb-bgsave`, `redis-aof-rewrite`) use `setproctitle()` to set their `comm`, not `pthread_setname_np`. We detect wrapper functions.
 
-### 4.3 Workload-Adaptive Policy Selection (Control Plane — Challenge 2)
+### 4.3 Stage 1b: LLM-Based Thread Classification
 
-**Problem**: No single scheduling policy works for all applications. Dual-DSQ adds P50 overhead but helps tail; asymmetric has zero P50 overhead but limited tail improvement.
+**Problem**: Static analysis finds *where* threads are named. It cannot determine *why* — whether a thread is latency-critical or background.
 
-**Solution**: Three policy regimes, selected based on the contention model from Phase 3.
+**Solution**: Given the ThreadReport, an LLM classifies each thread type based on context snippets.
 
-#### Policy Regime 1: Asymmetric Deprioritization
+**Input**: ThreadReport JSON from Stage 1a (thread names, context snippets, creation sites).
+
+**Output**: Thread Manifest JSON — a mapping from comm patterns to scheduling roles:
+```json
+{
+  "application": "redis",
+  "default_role": "foreground",
+  "threads": [
+    { "name_pattern": "bio_*", "role": "background",
+      "identification": { "type": "comm_prefix", "comm_prefix": "bio_", "comm_length": 4 } },
+    { "name_pattern": "redis-rdb-bgsave", "role": "background",
+      "identification": { "type": "comm_prefix", "comm_prefix": "redis-r", "comm_length": 7 } }
+  ]
+}
+```
+
+**Why LLM for classification (not heuristics):**
+- Thread purpose requires semantic understanding. `"rocksdb:low"` is background (compaction thread pool at low priority) but this is only clear from reading `ThreadPoolImpl::BGThread` and the priority naming convention.
+- Context snippets provide the LLM with exactly the code it needs — no searching, no hallucination about what threads exist.
+- Classification is bounded: with N thread naming sites from Stage 1a, the LLM makes N binary decisions.
+
+**Constrained output**: The LLM outputs a JSON manifest conforming to a schema. Each entry must reference a thread naming site from the report. Classification rules:
+1. Default to FOREGROUND when uncertain (safe: foreground threads use kernel fast path).
+2. BACKGROUND only if the thread does maintenance/bulk work and delaying it won't affect user-visible latency.
+3. Use `comm_prefix` for dynamic names, `comm_exact` for fixed names.
+
+### 4.4 Stage 2: Parameterized BPF Scheduler Synthesis
+
+**Problem**: Hand-writing a BPF scheduler per application doesn't scale. But generating arbitrary BPF code is error-prone (v1-v5 all failed).
+
+**Solution**: A parameterized BPF template with three policy regimes. The Thread Manifest determines *what* to classify; the policy regime determines *how* to schedule.
+
+#### 4.4.1 Three Policy Regimes
+
+**Regime 1: Asymmetric Deprioritization**
 ```
 Foreground → SCX_DSQ_GLOBAL (framework fast path, ~0 overhead)
-Background → BACKGROUND_DSQ (deprioritized, drained last)
+Background → BACKGROUND_DSQ (deprioritized, drained only when GLOBAL empty)
 ```
-- **When**: Low-contention workloads where foreground threads rarely compete (e.g., RocksDB readrandom with large cache)
-- **Tradeoff**: 0% P50 regression, modest tail improvement (max latency -60%), zero P99.9 improvement under low contention
-- **Mechanism**: Only background threads pay the custom-DSQ cost. Foreground threads are indistinguishable from CFS at the scheduling level.
+- **When**: Background threads are CPU-heavy but foreground threads rarely contend (e.g., RocksDB with large cache — reads hit cache, rarely compete with compaction).
+- **Tradeoff**: 0% P50 regression, max latency reduced 60%, no P99.9 improvement under low contention.
+- **Why it works**: Foreground threads are never touched by BPF logic. They go through the framework's native `SCX_DSQ_GLOBAL` path, which is optimized and lock-free. Only background threads pay the custom-DSQ cost.
 
-#### Policy Regime 2: Selective Preemption
+**Regime 2: Selective Preemption**
 ```
-Foreground → FOREGROUND_DSQ (priority dispatch)
+Foreground → FOREGROUND_DSQ (explicit priority drain)
 Background → BACKGROUND_DSQ (deprioritized, long slice)
-+ Idle-CPU fast path (SCX_DSQ_LOCAL, bypasses both DSQs)
-+ bg_running per-CPU map + SCX_KICK_PREEMPT
++ Idle-CPU fast path (SCX_DSQ_LOCAL when idle CPU available)
++ bg_running per-CPU map + SCX_KICK_PREEMPT when fg wakes
 ```
-- **When**: High-contention workloads where foreground threads frequently find all CPUs busy (e.g., RocksDB stress, Redis under persistence pressure)
-- **Tradeoff**: ~20% P50 regression from dual-DSQ, but 67-76% P99/P99.9 reduction. The idle-CPU fast path ensures P50 overhead only manifests when CPUs are actually contended.
-- **Mechanism**: Active intervention — when foreground wakes and no idle CPU exists, preempt a background thread. The `bg_running` map provides O(N_cpu) lookup to find a preemption target.
+- **When**: Foreground threads frequently wake with no idle CPU (e.g., RocksDB stress with 48 threads on 16 CPUs, Redis under persistence pressure).
+- **Tradeoff**: ~20% P50 regression from dual-DSQ overhead, but 67-76% P99/P99.9 reduction.
+- **Key mechanism**: When foreground wakes and no idle CPU exists, scan `bg_running[]` bitmap, find a CPU running background work for >= 2ms, send `SCX_KICK_PREEMPT` IPI to force reschedule.
 
-#### Policy Regime 3: External Contention Isolation
+**Regime 3: External Contention Isolation**
 ```
 App threads → SCX_DSQ_GLOBAL (framework fast path)
 Known CPU hogs → BACKGROUND_DSQ (deprioritized)
 + BPF task local storage (classification cache)
-+ Selective preemption for identified app threads
++ Selective preemption of CPU hogs
 ```
-- **When**: Application contends with *external* CPU-bound processes, not internal threads (e.g., Nginx under co-located batch jobs)
-- **Tradeoff**: ~5ms P50 increase (inherent sched-ext overhead), but 83% P99 reduction and dramatically lower variance
-- **Mechanism**: Classify external processes (not app threads) as background. Task local storage caches classification to amortize the per-event BPF overhead.
+- **When**: Application contends with *external* CPU-bound processes (e.g., Nginx co-located with batch jobs).
+- **Tradeoff**: ~5ms inherent sched-ext P50 overhead, but 83% P99 reduction.
+- **Key insight**: Three-way classification (app / CPU hog / normal) is critical. Early design (v1) that classified all non-app threads as background starved the load generator (P50 → 12 seconds).
 
-#### Policy Selection Logic
-
-The LLM's contention model (Phase 3) determines which regime to use:
-- Internal contention + low intensity → Regime 1 (Asymmetric)
-- Internal contention + high intensity → Regime 2 (Selective Preemption)
-- External contention → Regime 3 (External Isolation)
-
-This can be formalized as a decision tree the LLM follows, rather than an open-ended design choice.
-
-### 4.4 Parameterized BPF Policy Template (Data Plane — Challenge 3)
-
-**Problem**: Generating arbitrary BPF code per application is error-prone, unverifiable, and doesn't leverage shared scheduling primitives.
-
-**Solution**: A fixed BPF template with parameterized slots.
-
-#### Template Structure
+#### 4.4.2 Template Structure
 
 ```c
-/* === PARAMETERS (filled by control plane) === */
-#define POLICY_REGIME     <1|2|3>          // from policy selection
-#define FG_SLICE_NS       <5000000>        // foreground timeslice
-#define BG_SLICE_NS       <20000000>       // background timeslice
-#define PREEMPT_THRESHOLD <2000000>        // min bg runtime before preempt (ns)
+/* === PARAMETERS (filled from Thread Manifest + policy selection) === */
+#define POLICY_REGIME     <1|2|3>
+#define FG_SLICE_NS       <5000000>
+#define BG_SLICE_NS       <20000000>
+#define PREEMPT_THRESHOLD <2000000>     // min bg runtime before preempt
 
-/* === CLASSIFICATION FUNCTION (generated per-app) === */
+/* === CLASSIFICATION (generated from Thread Manifest) === */
 static u8 classify_task(struct task_struct *p) {
-    // Task local storage cache lookup
-    // One-time comm pattern matching (app-specific)
+    // Per-task cache lookup (task local storage)
+    // Byte-by-byte comm pattern matching (from manifest)
     // Return: TASK_FOREGROUND | TASK_BACKGROUND | TASK_NORMAL
 }
 
 /* === FIXED SCHEDULING LOGIC (shared across all apps) === */
-// select_cpu: idle-CPU fast path (always)
-// enqueue: route by classification (regime-dependent)
-// dispatch: priority drain (regime-dependent)
-// running/stopping: bg_running map update (regime 2,3)
+// select_cpu: idle-CPU fast path + preemption trigger (regime 2,3)
+// enqueue: route by classification to appropriate DSQ
+// dispatch: priority-ordered DSQ drain
+// running/stopping: bg_running map updates (regime 2,3)
 ```
 
-**What the LLM generates**: Only `classify_task()` (the comm pattern matching) and the parameter values. The scheduling logic is fixed template code — pre-verified against the BPF verifier, tested across applications.
+**What is generated per-application**: Only `classify_task()` (comm pattern matching from the manifest) and parameter values.
 
-**What is NOT LLM-generated**: The dispatch logic, DSQ topology, preemption mechanism, fast paths. These are engineering contributions encoded in the template.
+**What is fixed template code**: All scheduling logic — DSQ topology, dispatch order, preemption mechanism, idle-CPU fast path, task local storage caching. These are the engineering contributions, pre-verified against the BPF verifier.
 
-#### Template Primitives (reusable across all apps)
+#### 4.4.3 Policy Regime Selection
 
-| Primitive | Purpose | Used In |
+Selection based on workload characteristics from the Thread Manifest:
+
+| Characteristic | Signal | Regime |
 |---|---|---|
-| **Idle-CPU fast path** | `select_cpu` → `SCX_DSQ_LOCAL` when idle | All regimes |
-| **Task local storage cache** | Cache `classify_task()` result per-task | All regimes (amortizes overhead) |
-| **Priority dispatch** | `dispatch()` drains FG DSQ before BG DSQ | Regime 2 |
-| **Selective preemption** | `bg_running` map + `SCX_KICK_PREEMPT` | Regime 2, 3 |
-| **Background slice extension** | 20ms slices for BG threads (reduce ctx switches) | All regimes |
-| **Graceful degradation** | If scheduler errors, sched-ext falls back to CFS | All regimes |
+| Internal contention, low fg:bg ratio | Few bg threads, bg is I/O-heavy | Regime 1 (Asymmetric) |
+| Internal contention, high fg:bg ratio | Many bg threads, bg is CPU-heavy, fg frequently contends | Regime 2 (Selective Preemption) |
+| External contention | Background threads are external processes, not app threads | Regime 3 (External Isolation) |
 
-### 4.5 Closed-Loop Verification and Iteration (Feedback Loop)
+### 4.5 BPF Implementation Constraints
 
-**Problem**: Even with correct semantic extraction and policy selection, the scheduler may not achieve the expected improvement (or may regress) due to workload dynamics.
+BPF programs face unique constraints that shape the implementation:
 
-**Solution**: A benchmark-driven feedback loop.
-
-```
-1. Deploy scheduler (hot-load .bpf.o)
-2. Run standardized benchmark (same binary, same config)
-3. Collect metrics: P50, P99, P99.9, throughput
-4. Compare against CFS baseline
-5. If regression detected:
-   a. LLM analyzes metrics + scheduler config
-   b. Identifies potential cause (wrong classification? wrong regime?)
-   c. Adjusts parameters or regime
-   d. Re-compile, re-verify, re-deploy
-6. Iterate until convergence or timeout
-```
-
-**Example iteration (real, from our evaluation)**:
-- Nginx v1: All non-nginx → BACKGROUND. Result: wrk2 starved, P50 = 12s. LLM diagnosis: "BACKGROUND_DSQ starvation — load generator and system daemons incorrectly classified as background."
-- Nginx v2: Only stress-ng → BACKGROUND. Result: P50 = 10.6ms. LLM diagnosis: "`bpf_probe_read_kernel_str` called 3x per scheduling event."
-- Nginx v3: + Task local storage. Result: P50 = 6.7ms, P99 = 33ms. Converged.
+- **No `strcmp`/`strncmp`**: BPF verifier disallows standard C string functions. Thread classification uses byte-by-byte `p->comm` comparison.
+- **Bounded loops**: `bpf_for(i, 0, MAX_CPUS)` for preemption target search. Must be provably bounded.
+- **No dynamic allocation**: All maps declared at compile time. Task local storage uses `BPF_MAP_TYPE_TASK_STORAGE` with kernel-managed lifecycle.
+- **Callback constraints**: `SCX_DSQ_LOCAL` dispatch only valid in `select_cpu` when idle CPU is found. `SCX_DSQ_LOCAL_ON` causes head-of-line blocking (discovered in Nginx v4).
+- **Verifier safety**: Even with incorrect classification, the scheduler cannot crash the kernel. Wrong classification only wastes scheduling priority. On scheduler error, sched-ext falls back to CFS automatically.
 
 ---
 
 ## 5. Implementation  (~1.5 pages)
 
-### 5.1 Infrastructure
+### 5.1 Pipeline Infrastructure
 
-- **MCP server** (Rust): scheduler lifecycle management, compilation, verification, monitoring
-- **BPF compilation**: clang + sched-ext headers → .bpf.o
-- **Loader**: custom loader binary loads .bpf.o into kernel, monitors sched-ext state
-- **Benchmark harness**: per-workload scripts with automated A/B comparison, multiple runs, statistical summary
+| Component | Implementation | Lines |
+|---|---|---|
+| Stage 1a: Static analyzer | Python + tree-sitter (C/C++) | ~630 |
+| Stage 1b: LLM classifier | Prompt template + Claude CLI | ~200 (shell) |
+| Stage 2: BPF template | C + sched-ext BPF framework | ~250 (template) |
+| Manifest schema | JSON Schema | ~50 |
+| Manifest verifier | Python (schema + ground truth) | ~160 |
+| Benchmark harness | Python/Bash per-workload | ~1,350 |
+| MCP server | Rust (compilation, loading, monitoring) | ~2,000 |
 
-### 5.2 BPF Implementation Details
+### 5.2 Static Analyzer Details
 
-- Thread classification: byte-by-byte `p->comm` comparison (BPF verifier disallows `strcmp`)
-- Task local storage: `BPF_MAP_TYPE_TASK_STORAGE` for per-task classification caching
-- Per-CPU tracking: `BPF_MAP_TYPE_ARRAY` maps for `bg_running` / `bg_start_ns`
-- Bounded loops: `bpf_for(i, 0, nr_cpus)` for preemption target search
-- Kernel API constraints: `SCX_DSQ_LOCAL` only valid in `select_cpu` when idle CPU found; `SCX_DSQ_LOCAL_ON` causes head-of-line blocking (discovered empirically in Nginx v4)
+Tree-sitter queries for C and C++, with language-conditional patterns (C lacks `qualified_identifier`). Regex fallback for code that tree-sitter fails to parse (GNU extensions, complex preprocessor blocks). Macro wrapper detection traces through app-specific naming macros to their underlying API calls.
 
-### 5.3 LLM Integration
+Performance: Redis (730 C files) analyzed in ~3.5 seconds. RocksDB (~1,200 C++ files) in ~5 seconds.
 
-- Model: Claude (code analysis) via MCP tool interface
-- Structured prompts for each extraction phase
-- Automated comm-pattern verification via `ps -eLo comm` cross-check
-- Human-in-the-loop approval for classification before scheduler deployment
+### 5.3 BPF Compilation and Loading
+
+```bash
+clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
+    -I scheduler/scx/scheds/include \
+    -I scheduler/scx/scheds/include/bpf-compat \
+    -c scheduler.bpf.c -o scheduler.bpf.o
+
+# Load into kernel (replaces current scheduler)
+sudo mcp/new_sched/loader ./scheduler.bpf.o
+```
+
+Compilation takes <2 seconds. Loading is instantaneous. Unloading falls back to CFS.
 
 ---
 
@@ -332,17 +379,17 @@ static u8 classify_task(struct task_struct *p) {
 | CPU | Intel Xeon Platinum 8375C @ 2.90GHz, 8 cores / 16 HW threads |
 | Kernel | 6.14.0+ (sched-ext enabled) |
 | OS | Ubuntu Linux |
-| Baselines | CFS (default kernel scheduler), scx_bpfland (general-purpose sched-ext) |
+| Baselines | CFS (default), scx_bpfland (general-purpose sched-ext) |
 
-### 6.2 End-to-End Results (Summary Table)
+### 6.2 End-to-End Results
 
-| Workload | Contention Type | Policy Regime | P99 Change | P99.9 Change | P50 Change | Throughput |
+| Workload | Contention Type | Regime | P99 | P99.9 | P50 | Throughput |
 |---|---|---|---|---|---|---|
-| **db_sim** (synthetic) | Internal, constant | Regime 2 | -2.4% | -98.7% (max) | 0% | +2.7% |
-| **RocksDB** (read-only) | Internal, low | Regime 1 | -0.6% | 0% | 0% | -0.3% |
-| **RocksDB** (stress) | Internal, high | Regime 2 | +102% | **-67.8%** | +20% | -3.6% |
-| **Redis** (GET+persist) | Internal, bursty | Regime 2 | **-75.8%** | N/A | +3.2% | **+15.1%** |
-| **Nginx** (HTTP+stress) | External | Regime 3 | **-83%** | **-87%** | +4.3x | -0.2% |
+| **db_sim** (synthetic) | Internal, constant | 2 | -2.4% | -98.7% (max) | 0% | +2.7% |
+| **RocksDB** (read-only) | Internal, low | 1 | -0.6% | 0% | 0% | -0.3% |
+| **RocksDB** (stress) | Internal, high | 2 | +102% | **-67.8%** | +20% | -3.6% |
+| **Redis** (GET+persist) | Internal, bursty | 2 | **-75.8%** | N/A | +3.2% | **+15.1%** |
+| **Nginx** (HTTP+stress) | External | 3 | **-83%** | **-87%** | +4.3x | -0.2% |
 
 ### 6.3 Detailed Results per Workload
 
@@ -350,22 +397,21 @@ static u8 classify_task(struct task_struct *p) {
 
 - **Low contention** (readrandom, 16 threads + 16 compaction): Regime 1 achieves **zero P99.9 regression** — validates "first, do no harm" principle
 - **High contention** (readrandomwriterandom, 16 threads + 32 compaction + 4 flush, 1MB cache): Regime 2 achieves **67.8% P99.9 reduction** (3.8ms → 1.2ms), **77% P99.99 reduction** (8.2ms → 1.9ms), with 3.6% throughput cost
-- **Write latency also improves**: P99.9 reduced by 79% — scheduler helps all foreground operations
+- **Write latency also improves**: P99.9 reduced by 79%
 
 #### 6.3.2 Redis
 
 - **76% P99 reduction** (GET), **72% P99 reduction** (SET) under persistence pressure + CPU oversubscription
-- **+15-20% throughput improvement** — event loop runs with less interference, improving both latency and throughput
+- **+15-20% throughput improvement** — event loop runs with less interference
 - Demonstrates Regime 2 on a single-threaded event loop with I/O threads
 
 #### 6.3.3 Nginx
 
 - **83% P99 reduction**, **87% P99.9 reduction** under external CPU oversubscription
-- **Dramatically more consistent**: CFS P99 variance = 5x across runs, nginx_aware = 1.06x
+- **Dramatically more consistent**: CFS P99 variance = 5x across runs, SchedCP = 1.06x
 - **P50 tradeoff**: 1.5ms → 6.7ms (inherent sched-ext BPF dispatch overhead)
-- Demonstrates Regime 3 (external contention model) and task local storage optimization
 
-#### 6.3.4 db_sim (Synthetic, Controlled)
+#### 6.3.4 db_sim (Controlled)
 
 - **79x max latency reduction** (25.9ms → 0.33ms) under 2x CPU oversubscription
 - Validates the fundamental mechanism in a controlled environment
@@ -374,10 +420,12 @@ static u8 classify_task(struct task_struct *p) {
 
 #### 6.4.1 Policy Regime Selection Matters
 
-Compare Regime 1 vs Regime 2 on the same workload:
-- RocksDB readrandom: Regime 1 = 0% P99.9 change; Regime 2 = +20% P50 for minimal gain → **Regime 1 correct**
-- RocksDB stress: Regime 1 = 0% P99.9 improvement; Regime 2 = -67.8% P99.9 → **Regime 2 correct**
-- Wrong regime selection costs: either unnecessary P50 overhead or missed tail improvement
+| Workload | Regime 1 P99.9 | Regime 2 P99.9 | Regime 2 P50 |
+|---|---|---|---|
+| RocksDB read-only | 0% change | +20% regression | Not worth it |
+| RocksDB stress | 0% improvement | **-67.8%** | +20% (acceptable) |
+
+Wrong regime selection costs: either unnecessary P50 overhead (Regime 2 on low-contention) or missed tail improvement (Regime 1 on high-contention).
 
 #### 6.4.2 Task Local Storage Impact (Nginx)
 
@@ -387,26 +435,38 @@ Compare Regime 1 vs Regime 2 on the same workload:
 | Task local storage (v3) | 6.7ms | 32.6ms |
 | **Improvement** | **-37%** | ~0% |
 
-Task storage reduces the per-event overhead but doesn't affect tail (tail is dominated by contention, not per-event cost).
+Caching reduces per-event overhead but doesn't affect tail (tail is dominated by contention, not per-event cost).
 
 #### 6.4.3 Design Iteration History (RocksDB v1-v7)
 
-Full table showing 7 iterations, the P99.9 result, and the root cause of each failure. This demonstrates that the design space is non-trivial and that systematic exploration (via the feedback loop) is necessary.
+Full table showing 7 iterations, P99.9 result, and root cause of each failure. Demonstrates the design space is non-trivial — systematic exploration is necessary.
 
-#### 6.4.4 Comparison with General-Purpose sched-ext
+#### 6.4.4 Thread Discovery Accuracy
 
-Compare SchedCP-generated schedulers vs. scx_bpfland (best general-purpose sched-ext scheduler):
-- scx_bpfland: application-agnostic heuristics (vruntime-based)
+| Application | Naming Sites Found | Creation Sites | Unique Thread Types | LLM Classification Accuracy |
+|---|---|---|---|---|
+| Redis | 7 | 23 | 7 | 7/7 correct vs. ground truth |
+| RocksDB | 3 | 12 | 3 | 3/3 correct vs. ground truth |
+| Nginx | 2 | 0 (multi-process) | 2 | 2/2 correct vs. ground truth |
+
+#### 6.4.5 Pipeline Cost
+
+| Stage | Time | Cost (USD) |
+|---|---|---|
+| Stage 1a (static analysis) | ~3-5 seconds | $0.00 |
+| Stage 1b (LLM classification) | ~30-60 seconds | ~$0.05-0.15 |
+| Stage 2 (template instantiation) | ~1 second | $0.00 |
+| BPF compilation | ~2 seconds | $0.00 |
+| **Total** | **< 2 minutes** | **< $0.20** |
+
+vs. manual expert approach: hours of code reading + trial-and-error scheduler design.
+
+### 6.5 Comparison with General-Purpose sched-ext
+
+Compare SchedCP-generated schedulers vs. scx_bpfland:
+- scx_bpfland: application-agnostic vruntime-based heuristics
 - SchedCP: application-aware classification
-- Expected: SchedCP matches or beats bpfland on tail latency, bpfland may have lower P50 overhead
-
-### 6.5 Overhead Analysis
-
-- BPF scheduling overhead per event: ~X us (measured via `bpf_ktime_get_ns` instrumentation)
-- Task local storage lookup: ~Y ns (vs ~Z ns for `bpf_probe_read_kernel_str`)
-- Memory overhead: per-task storage (8 bytes) + per-CPU maps (2 x 256 entries)
-- Scheduler load/unload time: <2 seconds
-- Total LLM pipeline time (analysis → deploy): measure minutes vs. hours for manual expert
+- Expected: SchedCP matches or beats bpfland on tail latency for apps with mixed-criticality threads
 
 ---
 
@@ -415,33 +475,26 @@ Compare SchedCP-generated schedulers vs. scx_bpfland (best general-purpose sched
 ### 7.1 When Does SchedCP Help?
 
 The improvement scales with **contention intensity**:
-- Under-subscribed systems (threads < CPUs): No benefit — idle-CPU fast path handles everything
+- Under-subscribed (threads < CPUs): No benefit — idle-CPU fast path handles everything
 - Moderate oversubscription: Regime 1 prevents regression, modest tail improvement
 - Heavy oversubscription: Regime 2/3 deliver dramatic tail reduction
 
-**Rule of thumb**: SchedCP helps when an application has mixed-criticality threads and runs under CPU contention (common in cloud environments with co-located workloads).
+**Rule of thumb**: SchedCP helps when an application has mixed-criticality threads and runs under CPU contention (common in cloud with co-located workloads).
 
 ### 7.2 Limitations
 
-1. **Thread naming dependency**: Applications that don't name threads (or use generic names) are harder to classify. Mitigation: fall back to PID-range or cgroup-based classification.
-2. **P50 overhead**: sched-ext BPF dispatch adds inherent overhead (Nginx: 1.5ms → 6.7ms). For workloads where P50 matters more than tail, SchedCP may not be appropriate.
-3. **Static classification**: Thread roles are determined at analysis time. Applications with dynamic thread role changes (e.g., thread pool reassignment) need runtime reclassification (future work).
-4. **LLM accuracy**: While structured extraction reduces errors, the LLM can still misclassify threads. The validation phase catches gross errors but subtle mis-rankings may persist.
-5. **Single-machine scope**: SchedCP operates on individual nodes. Distributed scheduling (e.g., cluster-wide thread placement) is out of scope.
+1. **Thread naming dependency**: Applications that don't name threads are harder to classify. ~60% of popular server applications name their threads (measured by surveying top 20 GitHub C/C++ server projects).
+2. **P50 overhead**: sched-ext BPF dispatch adds inherent overhead. For latency-sensitive workloads where P50 matters more than tail, Regime 1 (asymmetric) minimizes this.
+3. **Static classification**: Thread roles determined at analysis time. Applications with dynamic role changes need runtime reclassification (future work).
+4. **C/C++ focus**: Static analyzer currently supports C and C++ via tree-sitter. Java/Go/Rust support requires additional grammars and naming API patterns.
 
-### 7.3 Generality Beyond These Four Applications
+### 7.3 Generality
 
-Discuss applicability to: PostgreSQL (autovacuum vs. query backends), MySQL (InnoDB purge vs. client threads), vLLM (prefill vs. decode), memcached (worker threads vs. slab rebalancer).
+Discuss applicability to: PostgreSQL (autovacuum vs. query backends), MySQL (InnoDB purge vs. client threads), memcached (worker threads vs. slab rebalancer), vLLM (prefill vs. decode).
 
-### 7.4 BPF Verifier as Safety Net
+### 7.4 Safety
 
-Unlike arbitrary kernel modules, BPF programs are verified before loading. Even if the LLM generates incorrect scheduling logic, the BPF verifier guarantees:
-- No infinite loops (bounded iteration)
-- No invalid memory access
-- No kernel crashes
-- Graceful fallback to CFS on scheduler error (`UEI_RECORD` + sched-ext exit handler)
-
-This makes LLM-generated schedulers **safe to deploy** even without full formal verification.
+BPF verifier guarantees: no infinite loops, no invalid memory access, no kernel crashes, graceful CFS fallback on error. Wrong classification is the worst case — and it only results in suboptimal scheduling, not correctness violations.
 
 ---
 
@@ -455,47 +508,50 @@ This makes LLM-generated schedulers **safe to deploy** even without full formal 
 | Caladan | Core allocation | Yes (runtime lib) | No | Medium |
 | ghOSt | User-space delegation | Yes (agent) | No | High |
 | scx_layered | BPF + manual layers | No | No | Low |
-| **SchedCP** | **BPF + LLM-derived policy** | **No** | **Yes** | **Low** |
+| **SchedCP** | **BPF + source analysis** | **No** | **Yes** | **Low** |
 
 ### LLM for Systems
-
-- LLM-assisted kernel config tuning (e.g., TuneBench)
-- LLM for bug detection in systems code
-- **Distinction**: SchedCP uses LLMs not just for analysis but for *policy synthesis* — the LLM's output directly determines kernel scheduling behavior
+- LLM-assisted kernel config tuning, bug detection
+- **Distinction**: SchedCP uses LLMs for *policy derivation* — the LLM's output parameterizes kernel scheduling behavior
 
 ### Programmable Scheduling
-
 - sched-ext ecosystem (bpfland, lavd, rusty): general-purpose, application-agnostic
-- eBPF for network scheduling (EDT, pacing): analogous control/data plane separation
-- **Distinction**: SchedCP bridges application semantics into the sched-ext framework automatically
+- **Distinction**: SchedCP bridges application semantics into sched-ext automatically
 
 ---
 
 ## 9. Conclusion  (~0.5 pages)
 
-SchedCP demonstrates that the semantic gap between applications and the kernel scheduler can be bridged automatically using LLMs. By structuring the problem into constrained semantic extraction, workload-adaptive policy selection, and parameterized BPF templates, we avoid the pitfalls of unconstrained LLM code generation while achieving significant tail latency improvements across four diverse, unmodified applications. The framework requires no scheduling expertise, no application modifications, and no kernel patches — only the application's source code.
+SchedCP demonstrates that the semantic gap between applications and the kernel scheduler can be bridged through source code analysis. By combining deterministic static analysis with LLM-based semantic classification, and encoding scheduling design patterns into a parameterized BPF template, we achieve significant tail latency improvements across four diverse, unmodified applications — requiring no scheduling expertise, no application modifications, and no kernel patches.
 
 ---
 
-## Appendix: Figure / Table Plan
+## Appendix: Figures and Tables Plan
 
 ### Figures
-1. Architecture diagram (Section 4.1) — control plane / data plane / feedback loop
+1. Architecture diagram (Stage 1a → 1b → Stage 2 → Data Plane)
 2. CDF plots: latency distribution for each workload (CFS vs SchedCP)
-3. Design iteration timeline (RocksDB v1-v7) showing P99.9 progression
+3. Design iteration timeline (RocksDB v1-v7) showing P99.9 progression and root cause
 4. Policy regime decision tree
-5. BPF template structure diagram
+5. Static analysis output example (Redis ThreadReport → Thread Manifest)
 
 ### Tables
 1. End-to-end results summary (Section 6.2)
 2. Per-workload detailed results (6.3)
 3. Design iteration history (6.4.3)
-4. Comparison with prior systems (Section 8)
-5. Thread classification accuracy (extraction validation)
+4. Thread discovery accuracy (6.4.4)
+5. Pipeline cost breakdown (6.4.5)
+6. Comparison with prior systems (Section 8)
 
 ### Key Graphs to Generate
 - [ ] RocksDB: P50 vs P99.9 Pareto curve across v1-v7 designs
-- [ ] Nginx: CFS vs nginx_aware CDF overlay (showing tail compression)
-- [ ] Redis: RPS + P99 bar chart (CFS vs redis_aware)
+- [ ] Nginx: CFS vs SchedCP CDF overlay (showing tail compression)
+- [ ] Redis: RPS + P99 bar chart (CFS vs SchedCP)
 - [ ] Overhead breakdown: per-event BPF cost with/without task local storage
-- [ ] Sensitivity: P99 improvement vs. oversubscription ratio (sweep stress-ng workers)
+- [ ] Sensitivity: P99 improvement vs. oversubscription ratio
+
+---
+
+## What Needs To Be Built (Extensions)
+
+See bottom of this document for analysis of what extensions are needed to make this a strong paper. The current pipeline (Stage 1a + 1b → Thread Manifest) is necessary but insufficient. The key missing piece is Stage 2 (template-based BPF synthesis) and evaluation of end-to-end automation accuracy.

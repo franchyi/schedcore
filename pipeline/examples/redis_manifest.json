@@ -1,0 +1,94 @@
+{
+  "application": "redis",
+  "source_path": "workloads/redis/redis-src/",
+  "language": "c",
+  "identification_method": "comm",
+  "default_role": "foreground",
+  "rationale": "Redis uses a single-threaded event loop for request handling but spawns background threads and child processes for persistence operations. BIO (Background I/O) threads handle deferred close, AOF fsync, and lazy-free operations. BGSAVE and BGREWRITEAOF fork child processes for RDB snapshots and AOF rewriting. These background operations are CPU and I/O intensive and can cause latency spikes for the main event loop and I/O threads when they compete for CPU time. Deprioritizing background threads ensures the event loop and I/O threads maintain low latency.",
+  "threads": [
+    {
+      "name_pattern": "bio_close*",
+      "role": "background",
+      "purpose": "Background I/O thread for deferred file close operations. Handles closing file descriptors asynchronously to avoid blocking the main event loop.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "bio_",
+        "comm_length": 4,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "bio_aof*",
+      "role": "background",
+      "purpose": "Background I/O thread for AOF (Append Only File) fsync operations. Performs periodic fsync of the AOF log to disk.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "bio_",
+        "comm_length": 4,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "bio_lazy_free*",
+      "role": "background",
+      "purpose": "Background I/O thread for lazy memory freeing. Deallocates large objects asynchronously to avoid blocking the event loop.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "bio_",
+        "comm_length": 4,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "redis-rdb-bgsave",
+      "role": "background",
+      "purpose": "Forked child process for RDB snapshot persistence. Serializes the entire dataset to disk. CPU and memory intensive due to copy-on-write.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "redis-r",
+        "comm_length": 7,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "redis-aof-rewrite",
+      "role": "background",
+      "purpose": "Forked child process for AOF rewrite. Compacts the append-only file by rewriting it with the current dataset state.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "redis-a",
+        "comm_length": 7,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "redis-server (main)",
+      "role": "foreground",
+      "purpose": "Main event loop thread. Handles all client connections, command parsing, and execution. Single-threaded request processing — any scheduling delay directly increases request latency.",
+      "identification": {
+        "type": "comm_exact",
+        "comm_prefix": "redis-server",
+        "comm_length": 12,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "io_thd_*",
+      "role": "foreground",
+      "purpose": "I/O helper threads for multi-threaded I/O (Redis 6+). Handle client read/write operations in parallel with the main event loop. Latency-critical as they directly serve client requests.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "io_thd_",
+        "comm_length": 7,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "application": "rocksdb",
+  "source_path": "workloads/rocksdb/rocksdb/",
+  "language": "cpp",
+  "identification_method": "comm",
+  "default_role": "foreground",
+  "rationale": "RocksDB uses background threads (prefixed 'rocksdb:') for compaction and memtable flushing. These are CPU-intensive, long-running operations that compete with foreground read/write threads for CPU time. Under CPU oversubscription, background compaction threads can preempt latency-critical query threads, causing tail latency spikes. Deprioritizing 'rocksdb:' threads lets the kernel schedule foreground query threads first, reducing P99.9 latency without starving compaction (which tolerates delay).",
+  "threads": [
+    {
+      "name_pattern": "rocksdb:low*",
+      "role": "background",
+      "purpose": "Low-priority background compaction threads. Perform LSM-tree compaction to merge and sort SSTables. CPU-intensive and long-running.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:high*",
+      "role": "background",
+      "purpose": "High-priority background threads for memtable flush operations. Flush in-memory writes to disk as SSTables. Less CPU-intensive than compaction but still background work.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}

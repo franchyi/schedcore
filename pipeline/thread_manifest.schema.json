@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thread Manifest",
+  "description": "Output of Stage 1 Thread Discovery. Maps application thread types to scheduling roles for BPF scheduler generation.",
+  "type": "object",
+  "required": ["application", "identification_method", "rationale", "threads"],
+  "properties": {
+    "application": {
+      "type": "string",
+      "description": "Application name (e.g., 'rocksdb', 'redis', 'nginx')"
+    },
+    "source_path": {
+      "type": "string",
+      "description": "Path to the application source code that was analyzed"
+    },
+    "language": {
+      "type": "string",
+      "description": "Primary programming language of the application",
+      "enum": ["c", "cpp", "java", "go", "rust", "mixed"]
+    },
+    "identification_method": {
+      "type": "string",
+      "description": "How threads are identified at runtime",
+      "enum": ["comm", "uprobe", "hybrid"]
+    },
+    "default_role": {
+      "type": "string",
+      "description": "Role for threads not matching any pattern (typically 'foreground')",
+      "enum": ["foreground", "background"],
+      "default": "foreground"
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Why these threads have different latency requirements and how deprioritizing background threads will reduce tail latency"
+    },
+    "threads": {
+      "type": "array",
+      "description": "List of discovered thread types with their roles",
+      "items": {
+        "$ref": "#/$defs/thread_entry"
+      }
+    }
+  },
+  "$defs": {
+    "thread_entry": {
+      "type": "object",
+      "required": ["name_pattern", "role", "purpose", "identification"],
+      "properties": {
+        "name_pattern": {
+          "type": "string",
+          "description": "Human-readable thread name pattern (e.g., 'rocksdb:low*', 'bio_*')"
+        },
+        "role": {
+          "type": "string",
+          "description": "Scheduling role: foreground threads get priority, background threads are deprioritized",
+          "enum": ["foreground", "background"]
+        },
+        "purpose": {
+          "type": "string",
+          "description": "What this thread does in the application"
+        },
+        "identification": {
+          "$ref": "#/$defs/identification"
+        }
+      }
+    },
+    "identification": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Method used to identify this thread at runtime",
+          "enum": ["comm_prefix", "comm_exact", "uprobe"]
+        },
+        "comm_prefix": {
+          "type": ["string", "null"],
+          "description": "Fixed prefix bytes to match against task->comm (for comm_prefix/comm_exact types)"
+        },
+        "comm_length": {
+          "type": ["integer", "null"],
+          "description": "Number of bytes to compare in the comm field",
+          "minimum": 1,
+          "maximum": 15
+        },
+        "function_symbol": {
+          "type": ["string", "null"],
+          "description": "Function symbol name for uprobe-based identification"
+        },
+        "library_path": {
+          "type": ["string", "null"],
+          "description": "Path to binary or shared library containing the function symbol"
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "comm_prefix" } }
+      },
+      "then": {
+        "required": ["type", "comm_prefix", "comm_length"]
+      },
+      "else": {
+        "if": {
+          "properties": { "type": { "const": "comm_exact" } }
+        },
+        "then": {
+          "required": ["type", "comm_prefix", "comm_length"]
+        },
+        "else": {
+          "required": ["type", "function_symbol", "library_path"]
+        }
+      }
+    }
+  }
+}
