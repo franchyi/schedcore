@@ -200,21 +200,40 @@ From this prompt, the LLM:
 
 The earlier iterations (v1-v6) happened in a prior session where the prompt was more
 exploratory: "create an application-aware scheduler for RocksDB db_bench". The LLM
-iterated through 6 failed designs before finding the asymmetric principle:
+iterated through 6 failed designs before finding the asymmetric principle.
 
-| Version | Design | Result | LLM Diagnosis |
-|---|---|---|---|
-| v1 | Dual DSQ, drain foreground first | +413% P99.9 | Global DSQ lock contention on foreground enqueue |
-| v2 | v1 + SCX_KICK_PREEMPT | +373% P99.9 | IPI overhead even when preemption unnecessary |
-| v3 | v1 + 1ms background slice | +412% P99.9 | Excessive context switches |
-| v4 | Per-CPU map + selective kick | +474% P99.9 | BPF map lookup overhead on every event |
-| v5 | Foreground always SCX_DSQ_LOCAL | Kernel crash | Can't dispatch to LOCAL on non-idle CPU |
-| **v6** | **FG→SCX_DSQ_GLOBAL, BG→custom DSQ** | **0% regression** | **Foreground bypasses BPF dispatch entirely** |
-| **v7** | Dual custom DSQ + preemption + idle fast path | **-67.8% P99.9** | Selective preemption only in tail cases |
+See `document/IMPLEMENTATION_PLAN.md` Section 5.2.3 for the full iteration table
+with P99.9 numbers. Summary:
+
+- **v1-v4**: All used custom foreground DSQs → +373% to +474% P99.9 regression
+  on the `readrandom` workload (CFS baseline P99.9 = 169us)
+- **v5**: Kernel crash (can't dispatch to SCX_DSQ_LOCAL on non-idle CPU)
+- **v6**: Asymmetric breakthrough — FG→SCX_DSQ_GLOBAL, BG→custom DSQ → 0% regression
+- **v7**: Different workload (`readrandomwriterandom`, much higher contention) —
+  dual custom DSQ + selective preemption → -67.8% P99.9
+
+**Important:** v1-v6 and v7 were tested on **different workloads** with different
+CFS baselines. v1-v6 used `readrandom` (CFS P99.9 = 169us, low contention). v7 used
+`readrandomwriterandom` with 1MB cache (CFS P99.9 = 3765us, high contention). The
+numbers are not directly comparable across workloads.
 
 ### 1.5 Results
 
-**RocksDB v7 (readrandomwriterandom, high contention):**
+**RocksDB v6 (readrandom, low contention):**
+
+| Metric | CFS | rocksdb_aware v6 | Change |
+|---|---|---|---|
+| P50 | 22.38 us | 22.35 us | 0% |
+| P99.9 | 168.73 us | 168.65 us | **0% (no regression)** |
+| Max | 13,617 us | 12,632 us | -7.2% |
+| Throughput | 646K ops/s | 649K ops/s | +0.5% |
+
+**RocksDB v7 (readrandomwriterandom, high contention — different workload):**
+
+v7 trades P50 and P99 for dramatic P99.9/P99.99 improvement. Under this stress
+workload, CFS has very high tail latency (P99.9 = 3.7ms) because compaction threads
+(32 `rocksdb:*` threads) compete with reader threads (32 threads) on 16 CPUs. v7's
+selective preemption targets exactly these tail cases.
 
 | Metric | CFS | rocksdb_aware v7 | Change |
 |---|---|---|---|
@@ -223,6 +242,11 @@ iterated through 6 failed designs before finding the asymmetric principle:
 | **P99.9** | **3765 us** | **1213 us** | **-67.8%** |
 | **P99.99** | **8153 us** | **1878 us** | **-77.0%** |
 | Throughput | 149.8K ops/s | 144.4K ops/s | -3.6% |
+
+The P99 regression (+102%) is a known tradeoff: v7 uses dual custom DSQs (not
+SCX_DSQ_GLOBAL), so all threads pay BPF dispatch overhead. This hurts P50/P99 but
+allows `dispatch()` to enforce strict priority ordering, which dramatically cuts
+P99.9/P99.99 — the metrics that matter for SLA compliance.
 
 ---
 
