@@ -1,151 +1,158 @@
-# SchedCP: Future Plan and Extension Trajectory
-**Goal:** Elevate SchedCP from a promising prototype to a top-tier systems conference submission (OSDI, SOSP, EuroSys, NSDI) by moving from manual, human-in-the-loop BPF authorship to a fully automated, dynamic, and safe kernel scheduling synthesis framework.
+# SchedCP: Future Plan
 
-This document outlines the concrete technical roadmap to address the "Honest Status Assessment" gap and introduce novel systems-level contributions.
+**Core thesis:** LLM + static analysis can identify thread roles (foreground vs background) from application source code, enabling developers to write application-aware sched-ext schedulers that eliminate tail latency — without modifying the application.
+
+The LLM's role is **thread discovery**, not scheduler generation. Writing BPF schedulers is a systems engineering task best done by hand, guided by the thread classification the LLM provides.
 
 ---
 
-## 1. Close the Loop: Fully Automated BPF Synthesis & Agentic Feedback (The "Must-Have")
-Currently, the LLM pipeline stops at the Thread Manifest JSON, and the BPF schedulers are hand-authored. A true "LLM-Synthesized" system requires end-to-end automation.
+## What We Have
 
-**Action Items:**
-- **Hybrid Semantic-Structural Classification (The Two-Step Extract & Parse Method):**
-  1. **Step 1 (Deterministic Extraction):** Use deterministic program analysis tools (like Tree-sitter for static AST call-graphs, or eBPF for dynamic request tracing) to automatically extract hard structural facts about a thread. For example, identify exactly which threads invoke `send()` or `recv()` on the critical path, or which threads are spun up from `pthread_create` and have zero network I/O. Package these structural metrics and the associated source code entry point into a "Systematic Thread Dossier."
-  2. **Step 2 (LLM Semantic Handoff):** Feed the Systematic Thread Dossier into the LLM. Rather than having the LLM guess based on naming conventions, the LLM uses the hard structural facts to perform semantic synthesis: *"Does this thread's source code indicate it blocks a user-facing request?"*. The LLM then rigorously classifies the thread into objective categories based on the **User Request Critical Path**: 
-     - **Foreground:** Synchronous threads executing on the critical path of user request processing.
-     - **Background:** Asynchronous, deferred, or periodic threads operating outside the critical path.
-- **Parameterized BPF Templates Compiler:** Build a code generator (Stage 2) that consumes the LLM's classification and injects it into pre-verified BPF C templates. The LLM will no longer write arbitrary C code, but rather populate a structured BPF template.
-- **Automated Policy Regime Selection:** Implement a heuristic or ML-driven decision engine that automatically selects the appropriate scheduling topology (*Asymmetric Deprioritization*, *Selective Preemption*, or *External Isolation*) based on workload characteristics rather than human intuition.
-- **Agentic Feedback Loop (Closed-Loop Tuning):** Build an orchestrator that executes the entire cycle: Generate & compile -> Hot-load -> Run benchmark -> Observe tail latency -> Adjust BPF parameters -> Re-deploy.
+| Component | Status |
+|---|---|
+| Stage 1a: Tree-sitter static thread extraction | Done |
+| Stage 1b: LLM semantic classification | Done |
+| Thread Manifest schema + verification | Done |
+| Hand-written BPF schedulers (db_sim, RocksDB, Redis, Nginx) | Done |
+| Benchmark results (4 workloads, 67-87% P99 reduction) | Done |
 
-## 2. Dynamic Behavioral Profiling (Beyond Source Code)
-Relying solely on static analysis of `pthread_setname_np` or C/C++ ASTs is brittle. Many modern runtimes (Go, Rust, JVM) or legacy applications do not cleanly name their OS threads.
+---
 
-**Action Items:**
-- **Runtime Heuristic Discovery:** Develop a lightweight, passive BPF profiler that runs for 60 seconds to observe thread behavior (e.g., sleep/wake patterns, system call frequencies, CPU burst durations) *before* generating the scheduler.
-- **Behavioral Signatures:** Use these runtime metrics to supplement static analysis. For example, identify that "Thread A spends 90% of its time in `epoll_wait` (Foreground/I/O), while Thread B spends 99% of its time in CPU-bound user-space loops (Background/Compaction)."
-- **Hybrid Semantic Model:** Combine the static source code context with dynamic runtime profiles to create a universally applicable thread classification system, drastically increasing the system's robustness and applicability.
+## 1. Strengthen Thread Discovery (Core Contribution)
 
-### Implementation Guide: Dynamic Behavioral Profiling
+The thread discovery pipeline (Stage 1) is the main research contribution. It needs to be more robust, cover more languages, and work on applications that don't cleanly name their threads.
 
-To implement Dynamic Behavioral Profiling, the goal is to observe what a thread *actually does* at runtime rather than relying on what the developer named it in the source code. This is crucial for applications that don't name their threads or for detecting when a thread's behavior changes. This can be achieved by writing a lightweight eBPF profiler that runs in the background for a short window (e.g., 10–60 seconds), collects behavioral metrics per thread (TID), and then classifies them.
+### 1a. Improve Static Analysis Coverage
 
-#### Step 1: Define the "Features" of a Thread
-To classify a thread as Foreground (Latency-Critical) vs. Background (Throughput/Batch), specific metrics must be collected:
-*   **Foreground (e.g., Nginx worker, Redis event loop):** 
-    *   **Behavior:** Spends most of its time asleep waiting for network I/O. When it wakes up, it executes a very short, fast CPU burst to process the request, then goes back to sleep.
-    *   **Syscalls:** Heavy use of `epoll_wait`, `read`, `write`, `sendmsg`, `recvmsg`.
-*   **Background (e.g., RocksDB compaction, garbage collection):**
-    *   **Behavior:** CPU-bound. Uses up its entire scheduler timeslice (e.g., 4-5ms) without sleeping, or it does heavy, blocking disk I/O.
-    *   **Syscalls:** Heavy use of `pwrite`, `fsync`, or compute-heavy loops with almost no syscalls.
+Current `stage1a_static_analysis.py` only handles C/C++ with tree-sitter. Extend to:
 
-#### Step 2: The eBPF Instrumentation (Kernel-Space)
-Write an eBPF program that hooks into kernel tracepoints to gather metrics securely and with very low overhead.
+- **Go:** `go func()` goroutines, `runtime.LockOSThread()`, goroutine naming via labels
+- **Rust:** `std::thread::Builder::new().name("...")`, `tokio::spawn` for async tasks
+- **Java/JVM:** `Thread.setName()`, `ExecutorService` thread pools, `@Async` annotations
 
-**Key Hook Points:**
-1.  **`tracepoint:sched:sched_switch`**: 
-    *   Fires every time a thread is scheduled on or off a CPU.
-    *   **What to measure:** Calculate the *CPU Burst Time* (time from schedule-in to schedule-out). If a thread constantly uses its full timeslice, it's likely a background compute thread.
-2.  **`tracepoint:sched:sched_wakeup`**:
-    *   Fires when a sleeping thread is woken up.
-    *   **What to measure:** Calculate the *Sleep Time* (time from schedule-out to wakeup). Also, track *who* woke it up. If a hardware interrupt (network card) wakes the thread, it's highly likely to be a foreground thread.
-3.  **`tracepoint:raw_syscalls:sys_enter`**:
-    *   Fires on every system call.
-    *   **What to measure:** Maintain a histogram of syscall types per TID. Group them into buckets: Network I/O, Disk I/O, Synchronization (futex), etc.
+For each language, the tree-sitter query extracts thread creation sites and naming patterns. The LLM then classifies them — same two-step pipeline, different parsers.
 
-**BPF Maps Structure:**
-Store this state in a BPF Hash Map where the key is the `TID` (Thread ID) and the value is a struct:
+### 1b. Dynamic Behavioral Profiling (Beyond Source Code)
+
+Static analysis is brittle for applications that don't name their threads (Go goroutines, JVM thread pools, legacy C code). A lightweight eBPF profiler can observe thread behavior at runtime to supplement or replace static analysis.
+
+**Approach:** Run a passive BPF profiler for 10-60 seconds that attaches to kernel tracepoints:
+
+| Tracepoint | What it measures |
+|---|---|
+| `sched:sched_switch` | CPU burst time (schedule-in to schedule-out) |
+| `sched:sched_wakeup` | Sleep duration, wakeup source (IRQ vs thread) |
+| `raw_syscalls:sys_enter` | Syscall histogram per TID (network vs disk vs sync) |
+
+**Per-thread metrics collected in BPF hash map:**
 ```c
 struct thread_metrics {
     u64 total_run_time;
     u64 total_sleep_time;
     u64 num_cpu_bursts;
     u64 max_cpu_burst;
-    u64 network_syscalls;
-    u64 disk_syscalls;
+    u64 network_syscalls;  // epoll_wait, read, write, sendmsg, recvmsg
+    u64 disk_syscalls;     // pwrite, fsync, fdatasync
 };
 ```
 
-#### Step 3: The Classification Engine (User-Space)
-After running the eBPF profiler for 60 seconds, a user-space daemon reads the BPF map and extracts the feature vector for every TID. Threads can be classified using one of three approaches:
+**Classification heuristics:**
+- **Foreground:** `total_sleep_time >> total_run_time` AND `network_syscalls > 1000` (event loop pattern)
+- **Background:** `(total_run_time / num_cpu_bursts) > 2ms` AND `disk_syscalls > 100` (compaction/batch pattern)
 
-1.  **Heuristics (Simplest):**
-    *   *Rule 1:* If `(total_run_time / num_cpu_bursts) > 2ms` and `disk_syscalls > 100`, mark as **BACKGROUND** (Compaction/Batch).
-    *   *Rule 2:* If `total_sleep_time >> total_run_time` and `network_syscalls > 1000`, mark as **FOREGROUND** (Event loop).
-2.  **Unsupervised Machine Learning:**
-    *   Feed the metrics (Run/Sleep ratio, Network/Disk ratio) into a K-Means clustering algorithm ($k=2$ or $3$). It will naturally group latency-sensitive threads together and batch threads together.
-3.  **LLM-Assisted:**
-    *   Format the metrics into a JSON profile and pass it to an LLM: *"Here is the runtime behavior of 40 threads belonging to PID 1234. Which ones are the latency-critical foreground threads?"*
+**Output:** Same Thread Manifest JSON. The profiler produces a behavioral dossier per thread; the LLM (or heuristics) classifies each as foreground/background.
 
-#### Step 4: Integration into SchedCP
-Once the user-space engine outputs the classification, it generates the **Thread Manifest**. Instead of generating a BPF scheduler that uses string comparison (`strncmp("rocksdb:low")`), a scheduler is generated that uses the exact TIDs or behavioral profiles to route them to the `BACKGROUND_DSQ` or `FOREGROUND_DSQ`. 
+**Why this matters:** Makes SchedCP applicable to *any* application, not just C/C++ programs with clean thread naming. This is the key extension for conference reviewers who will ask "does this generalize?"
 
-*(Note: Because TIDs change when threads restart, the profiler needs to run periodically, or the profile can be used to learn the thread creation patterns to catch new threads as they spawn).*
+### 1c. Broaden Application Coverage
 
-## 3. Application-Semantic Priority Inheritance via USDT and Resource Monitoring (The "Hard Systems Problem")
-A fundamental critique of deprioritizing background threads is **Priority Inversion**. In modern, highly optimized databases, this rarely manifests as standard `pthread_mutex` contention (which a naive `futex` BPF hook might catch). Instead, it appears as application-specific lock contention or shared resource exhaustion. For example:
-- **RocksDB:** Compaction threads acquire a global `DBMutex` to install new SST files. If starved while holding this, foreground `Put()` operations block.
-- **PostgreSQL:** Background `bgwriter` processes hold custom spinlocks (LWLocks) on buffer partitions. If deprioritized, foreground query backends spin and stall.
-- **Redis:** Background persistence (`BGSAVE` or AOF rewrite) saturates I/O bandwidth, causing the latency-critical foreground event loop to fall into uninterruptible sleep (`iowait`) inside the kernel.
+Add more workloads to demonstrate generality:
 
-**Action Items:**
-- **USDT & Custom Tracepoint Hooks:** The LLM will analyze application source code to identify specific synchronization primitives (e.g., RocksDB's `DBMutex`, PostgreSQL's LWLocks) and generate a BPF scheduler that attaches to the application's native USDT (Userland Statically Defined Tracing) probes (e.g., `rocksdb:mutex_wait_start` or `postgresql:lwlock_wait_start`).
-- **I/O Starvation Throttling:** For single-threaded event loops like Redis, the BPF scheduler will monitor kernel I/O wait states (`tracepoint:sched:sched_stat_iowait`). If a foreground thread blocks on I/O, the scheduler will dynamically throttle background I/O submission rates to unblock the hot path.
-- **Dynamic Boosting:** When application-specific contention is detected via these advanced hooks, the BPF scheduler dynamically boosts the blocking background thread to the `FOREGROUND_DSQ` (fast path) until the resource is released.
-- **Contribution:** Demonstrating that an LLM can analyze application semantics to automatically wire up USDT-driven priority inheritance and I/O throttling within a programmable kernel scheduler (`sched-ext`) represents a massive, novel technical contribution.
+| Application | Thread Pattern | Expected Benefit |
+|---|---|---|
+| PostgreSQL | bgwriter, autovacuum, checkpointer vs query backends | Reduce query tail latency during vacuum |
+| Memcached | worker threads vs slab rebalancer | Isolate cache hits from maintenance |
+| MySQL/InnoDB | purge threads, page cleaner vs query threads | Reduce read latency during heavy writes |
+| Kafka | log cleaner, compaction vs broker I/O threads | Reduce produce/consume latency |
 
-## 4. Formalize the "BPF Scheduling Cost Model"
-Top-tier systems papers require rigorous evaluation of trade-offs and fundamental limits, not just empirical performance improvements. SchedCP's cost model proves mathematically *why* and *when* different BPF scheduling topologies (Regimes) are optimal.
+For each: run Stage 1 to discover threads, hand-write BPF scheduler, benchmark CFS vs application-aware.
 
-### Implementation Guide: The BPF Scheduling Cost Model
+---
 
-#### Step 1: Deconstruct the Per-Event BPF Overhead ($O_{bpf}$)
-Every time a thread wakes up or goes to sleep, `sched-ext` calls the BPF program. This path introduces measurable overhead:
-*   **$C_{ctx}$ (Context Setup):** The baseline cost of transitioning from the kernel scheduling core into the eBPF VM.
-*   **$C_{map}$ (Classification/Map Lookup):** The cost to look up the thread's classification in a BPF map (e.g., `BPF_MAP_TYPE_TASK_STORAGE` or a hash map).
-*   **$C_{lock}$ (DSQ Lock Contention):** If a thread is routed to a custom Dispatch Queue (DSQ), `sched-ext` must acquire a global spinlock. As core count scales, this lock contention grows non-linearly.
-*   **$C_{ipi}$ (Preemption Kick):** The cost of issuing an Inter-Processor Interrupt (`SCX_KICK_PREEMPT`) to force a CPU to reschedule.
+## 2. Scheduler Design Patterns (Systems Engineering)
 
-**Total Dispatch Overhead ($O_{dispatch}$):**
+The BPF schedulers are written by hand, but the design patterns we've discovered should be documented as reusable knowledge.
+
+### Scheduling Regimes
+
+| Regime | When to Use | Example |
+|---|---|---|
+| **Asymmetric Deprioritization** | Low contention; foreground must not regress | Nginx under normal load |
+| **Selective Preemption** | High contention; background bursts steal CPU | RocksDB stress, Redis with BGSAVE |
+| **External Isolation** | Background load comes from separate processes | Nginx + stress-ng co-location |
+
+**Key design principle (discovered v1→v6):** Only intervene in scheduling of threads you want to *deprioritize*. Let foreground threads use the kernel's default fast path (`SCX_DSQ_GLOBAL`). Routing foreground threads through custom DSQs adds BPF dispatch overhead that hurts P99.9.
+
+### Priority Inversion Awareness
+
+Deprioritizing background threads can cause priority inversion when those threads hold locks needed by foreground threads:
+
+- **RocksDB:** Compaction acquires `DBMutex` to install SST files. Starving compaction → foreground `Put()` blocks.
+- **Redis:** BGSAVE saturates I/O bandwidth → foreground event loop hits `iowait`.
+- **PostgreSQL:** bgwriter holds LWLocks on buffer partitions → query backends spin.
+
+**Mitigation strategies** (hand-implemented per application):
+- Give background threads long time slices (20ms) so they finish critical sections quickly once scheduled
+- Monitor `iowait` states and temporarily boost background threads
+- Use application USDT probes (e.g., `rocksdb:mutex_wait_start`) to detect lock-holding and boost dynamically
+
+---
+
+## 3. BPF Scheduling Cost Model (Theoretical Contribution)
+
+A formal model explaining *why* and *when* application-aware scheduling helps, and when it hurts.
+
+### Per-Event BPF Overhead
+
+Every scheduling event (wake/sleep) invokes the BPF program:
+
 $$O_{dispatch} = C_{ctx} + C_{map} + C_{lock} + (P_{kick} \times C_{ipi})$$
-*(Where $P_{kick}$ is the probability a preemption kick is needed).*
 
-#### Step 2: Model the Waiting Time ($W$)
-The latency of a foreground request ($L_{fg}$) is its actual execution time ($S$) plus the time it spends waiting in a runqueue ($W$), plus the scheduling overhead ($O_{dispatch}$):
-$$L_{fg} = S + W + O_{dispatch}$$
+| Component | Cost | Description |
+|---|---|---|
+| $C_{ctx}$ | ~0.5μs | Kernel → BPF VM transition |
+| $C_{map}$ | ~0.1μs | Task classification lookup (O(1) with task storage) |
+| $C_{lock}$ | 0-10μs | DSQ spinlock contention (scales with cores) |
+| $C_{ipi}$ | ~5μs | Inter-processor interrupt for preemption kick |
 
-**Under Default CFS:**
-*   $O_{dispatch} \approx 0$ (highly optimized C code, per-CPU lockless queues).
-*   $W_{cfs}$ depends heavily on contention. If a foreground thread wakes up on a CPU where a background thread is running, it must wait for the background thread's timeslice ($T_{bg}$).
-*   Expected worst-case wait: $W_{cfs\_worst} \approx T_{bg}$ (e.g., 4-5ms).
+### The Trade-off
 
-**Under SchedCP (Regime 2 - Selective Preemption):**
-*   $W$ is minimized because the foreground thread is placed in a high-priority queue and preempts the background thread.
-*   $W_{schedcp\_worst} \approx C_{ipi} + C_{ctx}$ (just the time to interrupt and switch).
-*   *But*, SchedCP pays a higher $O_{dispatch}$ on *every single scheduling event*, even when there is no contention.
+Foreground request latency: $L_{fg} = S + W + O_{dispatch}$
 
-#### Step 3: Formulate the Trade-off Inequality
-This model mathematically defines the exact boundary of when SchedCP is beneficial. SchedCP improves latency when the time saved by avoiding CFS contention is greater than the cumulative BPF overhead added to the fast path.
+- **CFS:** $O_{dispatch} \approx 0$, but $W_{worst} \approx T_{bg}$ (4-5ms timeslice)
+- **SchedCP:** $O_{dispatch} > 0$ on every event, but $W_{worst} \approx C_{ipi}$ (5μs)
 
-**The "Do No Harm" Threshold (Why naive dual-queues fail):**
-In low-contention workloads (like RocksDB `readrandom` with a large cache), threads rarely block, and $W_{cfs} \approx 0$.
-If a naive dual-queue BPF scheduler is used, latency becomes:
-$$L_{schedcp} = S + 0 + O_{dispatch}$$
-Because $O_{dispatch}$ (specifically the global $C_{lock}$) is non-zero, $L_{schedcp} > L_{cfs}$. **This mathematically proves why v1-v4 designs caused a 400% latency regression.**
+**When SchedCP wins:** $W_{cfs} \gg O_{dispatch}$ — high contention workloads where foreground threads compete with background for CPU. Paying 5μs overhead to avoid 5ms wait = massive win (67-87% P99 reduction).
 
-**The Asymmetric Principle (Regime 1):**
-To fix the above, Regime 1 routes foreground threads directly to the kernel's lockless `SCX_DSQ_GLOBAL` or `SCX_DSQ_LOCAL`.
-*   Foreground $O_{dispatch} = C_{ctx} + C_{map}$ (no $C_{lock}$).
-*   By using Task Local Storage ($C_{map} \approx O(1)$ cache hit), the overhead drops to ~1-2 microseconds, eliminating the P50 regression while isolating background threads.
+**When SchedCP loses:** $W_{cfs} \approx 0$ — low contention workloads. The BPF overhead is pure cost with no benefit. **This is why v1-v4 designs caused 400% P99.9 regression on read-only RocksDB.**
 
-**The Contention Threshold (Regime 2/3):**
-Under high contention (RocksDB stress workload), $W_{cfs}$ spikes to multi-milliseconds.
-$$W_{cfs} \gg O_{dispatch}$$
-Here, paying 5 microseconds of $O_{dispatch}$ to save 5,000 microseconds of $W_{cfs}$ is a massive win, resulting in 67-87% P99.9 reductions.
+**Asymmetric fix:** Route foreground → `SCX_DSQ_GLOBAL` (no $C_{lock}$). Overhead drops to $C_{ctx} + C_{map}$ ≈ 1μs. Eliminates regression while still isolating background threads.
 
-**Action Items:**
-- **Microbenchmark the Primitives:** Write a minimal `sched-ext` scheduler to measure the raw cost of $C_{ctx}$, $C_{map}$, and $C_{lock}$ across different CPU core counts.
-- **Plot the "Cost Surface":** Create a 3D plot mapping Contention Level (X-axis) against BPF Overhead (Y-axis) to show Foreground P99 Latency (Z-axis).
-- **Define the Automaton:** SchedCP's Agentic Feedback Loop will use the inequality to automatically select regimes:
-    *   *If Application Contention Delay > BPF Custom Queue Overhead -> Select Regime 2.*
-    *   *If Application Contention Delay < BPF Custom Queue Overhead -> Select Regime 1.*
+### Action Items
+
+- Microbenchmark $C_{ctx}$, $C_{map}$, $C_{lock}$ across core counts (4, 8, 16, 32, 64)
+- Plot cost surface: contention level × BPF overhead → P99 latency
+- Validate model predictions against empirical results from 4 workloads
+
+---
+
+## Implementation Priority
+
+| Priority | Item | Effort | Impact |
+|---|---|---|---|
+| **P0** | Broaden evaluation (PostgreSQL, Memcached) | Medium | Proves generality |
+| **P0** | Cost model microbenchmarks | Medium | Theoretical foundation |
+| **P1** | Dynamic behavioral profiler | High | Handles unnamed threads |
+| **P1** | Go/Rust/Java static analysis | Medium | Language coverage |
+| **P2** | USDT-based priority inversion detection | High | Hard systems problem |
+| **P2** | Cost surface visualization | Low | Paper figure |
