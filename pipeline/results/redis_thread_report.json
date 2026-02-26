@@ -1,0 +1,240 @@
+{
+  "source_path": "/home/ubuntu/schedcp/workloads/redis/redis-src",
+  "language": "c",
+  "files_analyzed": 730,
+  "files_with_findings": 18,
+  "macro_wrappers": {
+    "redis_set_thread_title": "pthread_setname_np"
+  },
+  "proc_title_setters": {
+    "redisSetProcTitle": "setproctitle"
+  },
+  "thread_names": [
+    {
+      "file": "deps/jemalloc/src/background_thread.c",
+      "line": 432,
+      "function": "pthread_setname_np",
+      "name_arg": "\"jemalloc_bg_thd\"",
+      "is_constant": true,
+      "constant_value": "jemalloc_bg_thd",
+      "context_snippet": "static void *\nbackground_thread_entry(void *ind_arg) {\n\tunsigned thread_ind = (unsigned)(uintptr_t)ind_arg;\n\tassert(thread_ind < max_background_threads);\n#ifdef JEMALLOC_HAVE_PTHREAD_SETNAME_NP\n\tpthread_setname_np(pthread_self(), \"jemalloc_bg_thd\");\n#elif defined(__FreeBSD__) || defined(__DragonFly__)\n\tpthread_set_name_np(pthread_self(), \"jemalloc_bg_thd\");\n#endif\n\tif (opt_percpu_arena != percpu_arena_disabled) {\n\t\tset_current_thread_affinity((int)thread_ind);"
+    },
+    {
+      "file": "src/aof.c",
+      "line": 2618,
+      "function": "redisSetProcTitle (sets process title)",
+      "name_arg": "\"redis-aof-rewrite\"",
+      "is_constant": true,
+      "constant_value": "redis-aof-rewrite",
+      "context_snippet": "\n    if ((childpid = redisFork(CHILD_TYPE_AOF)) == 0) {\n        char tmpfile[256];\n\n        /* Child */\n        redisSetProcTitle(\"redis-aof-rewrite\");\n        redisSetCpuAffinity(server.aof_rewrite_cpulist);\n        snprintf(tmpfile,256,\"temp-rewriteaof-bg-%d.aof\", (int) getpid());\n        if (rewriteAppendOnlyFile(tmpfile) == C_OK) {\n            serverLog(LL_NOTICE,\n                \"Successfully created the temporary AOF base file %s\", tmpfile);"
+    },
+    {
+      "file": "src/bio.c",
+      "line": 265,
+      "function": "redis_set_thread_title (macro for pthread_setname_np)",
+      "name_arg": "bio_worker_title[worker]",
+      "is_constant": false,
+      "constant_value": null,
+      "context_snippet": "    sigset_t sigset;\n\n    /* Check that the worker is within the right interval. */\n    serverAssert(worker < BIO_WORKER_NUM);\n\n    redis_set_thread_title(bio_worker_title[worker]);\n\n    redisSetCpuAffinity(server.bio_cpulist);\n\n    makeThreadKillable();\n"
+    },
+    {
+      "file": "src/iothread.c",
+      "line": 711,
+      "function": "redis_set_thread_title (macro for pthread_setname_np)",
+      "name_arg": "thdname",
+      "is_constant": false,
+      "constant_value": null,
+      "context_snippet": " * and IO thread will communicate through event notifier. */\nvoid *IOThreadMain(void *ptr) {\n    IOThread *t = ptr;\n    char thdname[16];\n    snprintf(thdname, sizeof(thdname), \"io_thd_%d\", t->id);\n    redis_set_thread_title(thdname);\n    redisSetCpuAffinity(server.server_cpulist);\n    makeThreadKillable();\n    aeSetBeforeSleepProc(t->el, IOThreadBeforeSleep);\n    aeSetAfterSleepProc(t->el, IOThreadAfterSleep);\n    aeMain(t->el);"
+    },
+    {
+      "file": "src/module.c",
+      "line": 11499,
+      "function": "redisSetProcTitle (sets process title)",
+      "name_arg": "\"redis-module-fork\"",
+      "is_constant": true,
+      "constant_value": "redis-module-fork",
+      "context_snippet": "int RM_Fork(RedisModuleForkDoneHandler cb, void *user_data) {\n    pid_t childpid;\n\n    if ((childpid = redisFork(CHILD_TYPE_MODULE)) == 0) {\n        /* Child */\n        redisSetProcTitle(\"redis-module-fork\");\n    } else if (childpid == -1) {\n        serverLog(LL_WARNING,\"Can't fork for module: %s\", strerror(errno));\n    } else {\n        /* Parent */\n        moduleForkInfo.done_handler = cb;"
+    },
+    {
+      "file": "src/rdb.c",
+      "line": 1656,
+      "function": "redisSetProcTitle (sets process title)",
+      "name_arg": "\"redis-rdb-bgsave\"",
+      "is_constant": true,
+      "constant_value": "redis-rdb-bgsave",
+      "context_snippet": "\n    if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0) {\n        int retval;\n\n        /* Child */\n        redisSetProcTitle(\"redis-rdb-bgsave\");\n        redisSetCpuAffinity(server.bgsave_cpulist);\n        retval = rdbSave(req, filename,rsi,rdbflags);\n        if (retval == C_OK) {\n            sendChildCowInfo(CHILD_INFO_TYPE_RDB_COW_SIZE, \"RDB\");\n        }"
+    },
+    {
+      "file": "src/rdb.c",
+      "line": 3955,
+      "function": "redisSetProcTitle (sets process title)",
+      "name_arg": "\"redis-rdb-to-slaves\"",
+      "is_constant": true,
+      "constant_value": "redis-rdb-to-slaves",
+      "context_snippet": "            /* Close the reading part, so that if the parent crashes, the child\n             * will get a write error and exit. */\n            close(server.rdb_pipe_read);\n        }\n\n        redisSetProcTitle(\"redis-rdb-to-slaves\");\n        redisSetCpuAffinity(server.bgsave_cpulist);\n\n        retval = rdbSaveRioWithEOFMark(req,&rdb,NULL,rsi);\n        if (retval == C_OK && rioFlush(&rdb) == 0)\n            retval = C_ERR;"
+    }
+  ],
+  "thread_creates": [
+    {
+      "file": "deps/jemalloc/test/src/thd.c",
+      "line": 25,
+      "method": "pthread_create",
+      "start_routine": "proc",
+      "context_snippet": "}\n\n#else\nvoid\nthd_create(thd_t *thd, void *(*proc)(void *), void *arg) {\n\tif (pthread_create(thd, NULL, proc, arg) != 0) {\n\t\ttest_fail(\"Error in pthread_create()\\n\");\n\t}\n}\n\nvoid"
+    },
+    {
+      "file": "modules/vector-sets/vset.c",
+      "line": 768,
+      "method": "pthread_create",
+      "start_routine": "VADD_thread",
+      "context_snippet": "        targ[7] = attrib;\n        RedisModule_RetainString(ctx,val);\n        if (attrib) RedisModule_RetainString(ctx,attrib);\n        RedisModule_BlockedClientMeasureTimeStart(bc);\n        vset->thread_creation_pending++;\n        if (pthread_create(&tid,NULL,VADD_thread,targ) != 0) {\n            vset->thread_creation_pending--;\n            RedisModule_AbortBlock(bc);\n            RedisModule_Free(targ);\n            RedisModule_FreeString(ctx,val);\n            if (attrib) RedisModule_FreeString(ctx,attrib);"
+    },
+    {
+      "file": "modules/vector-sets/vset.c",
+      "line": 1149,
+      "method": "pthread_create",
+      "start_routine": "VSIM_thread",
+      "context_snippet": "        targ[8] = (void*)filter_expr;\n        targ[9] = (void*)(unsigned long)filter_ef;\n        targ[10] = (void*)(unsigned long)ground_truth;\n        RedisModule_BlockedClientMeasureTimeStart(bc);\n        vset->thread_creation_pending++;\n        if (pthread_create(&tid,NULL,VSIM_thread,targ) != 0) {\n            vset->thread_creation_pending--;\n            RedisModule_AbortBlock(bc);\n            RedisModule_Free(targ[4]);\n            RedisModule_Free(targ);\n            VSIM_execute(ctx, vset, vec, count, epsilon, withscores, withattribs, ef, filter_expr, filter_ef, ground_truth);"
+    },
+    {
+      "file": "modules/vector-sets/w2v.c",
+      "line": 437,
+      "method": "pthread_create",
+      "start_routine": "threaded_insert",
+      "context_snippet": "    uint64_t start_time = ms_time();\n    ctx.id = 0;\n    ctx.numele = numele;\n    pthread_t threads[numthreads];\n    for (int j = 0; j < numthreads; j++)\n        pthread_create(&threads[j], NULL, threaded_insert, &ctx);\n\n    // Wait for all the threads to terminate adding items.\n    for (int j = 0; j < numthreads; j++)\n        pthread_join(threads[j],NULL);\n"
+    },
+    {
+      "file": "modules/vector-sets/w2v.c",
+      "line": 464,
+      "method": "pthread_create",
+      "start_routine": "threaded_search",
+      "context_snippet": "    /* Search query */\n    start_time = ms_time();\n    ctx.id = 0; // We will use this atomic field to stop at N queries done.\n\n    for (int j = 0; j < numthreads; j++)\n        pthread_create(&threads[j], NULL, threaded_search, &ctx);\n\n    // Wait for all the threads to terminate searching.\n    for (int j = 0; j < numthreads; j++)\n        pthread_join(threads[j],NULL);\n"
+    },
+    {
+      "file": "src/bio.c",
+      "line": 173,
+      "method": "pthread_create",
+      "start_routine": "bioProcessBackgroundJobs",
+      "context_snippet": "    /* Ready to spawn our threads. We use the single argument the thread\n     * function accepts in order to pass the job ID the thread is\n     * responsible for. */\n    for (j = 0; j < BIO_WORKER_NUM; j++) {\n        void *arg = (void*)(unsigned long) j;\n        if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {\n            serverLog(LL_WARNING, \"Fatal: Can't initialize Background Jobs. Error message: %s\", strerror(errno));\n            exit(1);\n        }\n        bio_threads[j] = thread;\n    }"
+    },
+    {
+      "file": "src/iothread.c",
+      "line": 771,
+      "method": "pthread_create",
+      "start_routine": "IOThreadMain",
+      "context_snippet": "            serverLog(LL_WARNING, \"Fatal: Can't create event loop timers in IO thread.\");\n            exit(1);\n        }\n\n        /* Create IO thread */\n        if (pthread_create(&t->tid, NULL, IOThreadMain, (void*)t) != 0) {\n            serverLog(LL_WARNING, \"Fatal: Can't initialize IO thread.\");\n            exit(1);\n        }\n\n        /* For main thread */"
+    },
+    {
+      "file": "src/modules/helloacl.c",
+      "line": 149,
+      "method": "pthread_create",
+      "start_routine": "HelloACL_ThreadMain",
+      "context_snippet": "\n    void **targs = RedisModule_Alloc(sizeof(void*)*2);\n    targs[0] = bc;\n    targs[1] = RedisModule_CreateStringFromString(NULL, argv[1]);\n\n    if (pthread_create(&tid, NULL, HelloACL_ThreadMain, targs) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx, \"-ERR Can't start thread\");\n    }\n\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "src/modules/helloblock.c",
+      "line": 104,
+      "method": "pthread_create",
+      "start_routine": "HelloBlock_ThreadMain",
+      "context_snippet": "     * the delay and a reference to the blocked client handle. */\n    void **targ = RedisModule_Alloc(sizeof(void*)*2);\n    targ[0] = bc;\n    targ[1] = (void*)(unsigned long) delay;\n\n    if (pthread_create(&tid,NULL,HelloBlock_ThreadMain,targ) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    return REDISMODULE_OK;\n}"
+    },
+    {
+      "file": "src/modules/helloblock.c",
+      "line": 174,
+      "method": "pthread_create",
+      "start_routine": "HelloKeys_ThreadMain",
+      "context_snippet": "    RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx,NULL,NULL,NULL,0);\n\n    /* Now that we setup a blocking client, we need to pass the control\n     * to the thread. However we need to pass arguments to the thread:\n     * the reference to the blocked client handle. */\n    if (pthread_create(&tid,NULL,HelloKeys_ThreadMain,bc) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    return REDISMODULE_OK;\n}"
+    },
+    {
+      "file": "src/redis-benchmark.c",
+      "line": 937,
+      "method": "pthread_create",
+      "start_routine": "execBenchmarkThread",
+      "context_snippet": "\nstatic void startBenchmarkThreads(void) {\n    int i;\n    for (i = 0; i < config.num_threads; i++) {\n        benchmarkThread *t = config.threads[i];\n        if (pthread_create(&(t->thread), NULL, execBenchmarkThread, t)){\n            fprintf(stderr, \"FATAL: Failed to start thread %d.\\n\", i);\n            exit(1);\n        }\n    }\n    for (i = 0; i < config.num_threads; i++)"
+    },
+    {
+      "file": "tests/modules/auth.c",
+      "line": 209,
+      "method": "pthread_create",
+      "start_routine": "AuthBlock_ThreadMain",
+      "context_snippet": "    void **targ = RedisModule_Alloc(sizeof(void*)*3);\n    targ[0] = bc;\n    targ[1] = RedisModule_CreateStringFromString(NULL, username);\n    targ[2] = RedisModule_CreateStringFromString(NULL, password);\n    /* Create bg thread and pass the blockedclient, username and password to it. */\n    if (pthread_create(&tid, NULL, AuthBlock_ThreadMain, targ) != 0) {\n        RedisModule_AbortBlock(bc);\n    }\n    pthread_detach(tid);\n    return REDISMODULE_AUTH_HANDLED;\n}"
+    },
+    {
+      "file": "tests/modules/blockedclient.c",
+      "line": 43,
+      "method": "pthread_create",
+      "start_routine": "sub_worker",
+      "context_snippet": "    // Acquire GIL\n    RedisModule_ThreadSafeContextLock(ctx);\n\n    // Create another thread which will try to acquire the GIL\n    pthread_t tid;\n    int res = pthread_create(&tid, NULL, sub_worker, ctx);\n    assert(res == 0);\n\n    // Wait for thread\n    pthread_join(tid, NULL);\n"
+    },
+    {
+      "file": "tests/modules/blockedclient.c",
+      "line": 91,
+      "method": "pthread_create",
+      "start_routine": "worker",
+      "context_snippet": "     * using \"RedisModule_ThreadSafeContextTryLock\"\n     * as the GIL is already locked. */\n    RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL, NULL, 0);\n\n    pthread_t tid;\n    int res = pthread_create(&tid, NULL, worker, bc);\n    assert(res == 0);\n    pthread_detach(tid);\n\n    return REDISMODULE_OK;\n}"
+    },
+    {
+      "file": "tests/modules/blockedclient.c",
+      "line": 197,
+      "method": "pthread_create",
+      "start_routine": "bg_call_worker",
+      "context_snippet": "    /* Block the client */\n    bg->bc = RedisModule_BlockClient(ctx, NULL, NULL, NULL, 0);\n\n    /* Start a thread to handle the request */\n    pthread_t tid;\n    int res = pthread_create(&tid, NULL, bg_call_worker, bg);\n    assert(res == 0);\n    pthread_detach(tid);\n\n    return REDISMODULE_OK;\n}"
+    },
+    {
+      "file": "tests/modules/blockedclient.c",
+      "line": 347,
+      "method": "pthread_create",
+      "start_routine": "send_async_reply",
+      "context_snippet": "    UNUSED(ctx);\n    ThreadedAsyncRMCallCtx *ta_rm_call_ctx = RedisModule_Alloc(sizeof(*ta_rm_call_ctx));\n    ta_rm_call_ctx->bc = private_data;\n    ta_rm_call_ctx->reply = reply;\n    pthread_t tid;\n    int res = pthread_create(&tid, NULL, send_async_reply, ta_rm_call_ctx);\n    assert(res == 0);\n    pthread_detach(tid);\n}\n\n/*"
+    },
+    {
+      "file": "tests/modules/blockonbackground.c",
+      "line": 158,
+      "method": "pthread_create",
+      "start_routine": "BlockDebug_ThreadMain",
+      "context_snippet": "    targ[0] = bc;\n    targ[1] = (void*)(unsigned long) delay;\n    // pass 1 as flag to enable time tracking\n    targ[2] = (void*)(unsigned long) 1;\n\n    if (pthread_create(&tid,NULL,BlockDebug_ThreadMain,targ) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    pthread_detach(tid);\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/blockonbackground.c",
+      "line": 201,
+      "method": "pthread_create",
+      "start_routine": "BlockDebug_ThreadMain",
+      "context_snippet": "    targ[0] = bc;\n    targ[1] = (void*)(unsigned long) delay;\n    // pass 0 as flag to enable time tracking\n    targ[2] = (void*)(unsigned long) 0;\n\n    if (pthread_create(&tid,NULL,BlockDebug_ThreadMain,targ) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    pthread_detach(tid);\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/blockonbackground.c",
+      "line": 232,
+      "method": "pthread_create",
+      "start_routine": "DoubleBlock_ThreadMain",
+      "context_snippet": "     * the delay and a reference to the blocked client handle. */\n    void **targ = RedisModule_Alloc(sizeof(void*)*2);\n    targ[0] = bc;\n    targ[1] = (void*)(unsigned long) delay;\n\n    if (pthread_create(&tid,NULL,DoubleBlock_ThreadMain,targ) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    pthread_detach(tid);\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/postnotifications.c",
+      "line": 170,
+      "method": "pthread_create",
+      "start_routine": "KeySpace_PostNotificationsAsyncSetInner",
+      "context_snippet": "        return RedisModule_WrongArity(ctx);\n\n    pthread_t tid;\n    RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx,NULL,NULL,NULL,0);\n\n    if (pthread_create(&tid,NULL,KeySpace_PostNotificationsAsyncSetInner,bc) != 0) {\n        RedisModule_AbortBlock(bc);\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    }\n    pthread_detach(tid);\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/propagate.c",
+      "line": 187,
+      "method": "pthread_create",
+      "start_routine": "threadMain",
+      "context_snippet": "{\n    REDISMODULE_NOT_USED(argv);\n    REDISMODULE_NOT_USED(argc);\n\n    pthread_t tid;\n    if (pthread_create(&tid,NULL,threadMain,NULL) != 0)\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    pthread_detach(tid);\n\n    RedisModule_ReplyWithSimpleString(ctx,\"OK\");\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/propagate.c",
+      "line": 218,
+      "method": "pthread_create",
+      "start_routine": "threadDetachedMain",
+      "context_snippet": "{\n    REDISMODULE_NOT_USED(argv);\n    REDISMODULE_NOT_USED(argc);\n\n    pthread_t tid;\n    if (pthread_create(&tid,NULL,threadDetachedMain,NULL) != 0)\n        return RedisModule_ReplyWithError(ctx,\"-ERR Can't start thread\");\n    pthread_detach(tid);\n\n    RedisModule_ReplyWithSimpleString(ctx,\"OK\");\n    return REDISMODULE_OK;"
+    },
+    {
+      "file": "tests/modules/usercall.c",
+      "line": 197,
+      "method": "pthread_create",
+      "start_routine": "bg_call_worker",
+      "context_snippet": "    /* Block the client */\n    bg->bc = RedisModule_BlockClient(ctx, NULL, NULL, NULL, 0);\n\n    /* Start a thread to handle the request */\n    pthread_t tid;\n    int res = pthread_create(&tid, NULL, bg_call_worker, bg);\n    assert(res == 0);\n    pthread_detach(tid);\n\n    return REDISMODULE_OK;\n}"
+    }
+  ]
+}

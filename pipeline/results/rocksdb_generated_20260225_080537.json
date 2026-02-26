@@ -1,0 +1,69 @@
+{
+  "application": "rocksdb",
+  "source_path": "workloads/rocksdb/rocksdb/",
+  "language": "cpp",
+  "identification_method": "comm",
+  "rationale": "RocksDB uses an LSM-tree architecture where foreground threads handle user read/write requests (Get, Put, Iterator operations) while background thread pools perform compaction (merging/rewriting SST files), flush (writing memtables to SST files), and file purging. Compaction is the dominant background CPU consumer: it reads, decompresses, merge-sorts, recompresses, and writes large volumes of data. When compaction threads compete with foreground query threads for CPU time under oversubscription, foreground latency spikes dramatically. RocksDB names all its background thread pool threads with the prefix 'rocksdb:' followed by the priority level (low, high, bottom, user), making them trivially identifiable via task->comm. Deprioritizing these background threads ensures foreground query threads get immediate CPU access, reducing P99/P99.9 tail latency without meaningfully affecting compaction throughput (compaction is I/O-bound and tolerant of scheduling delay).",
+  "threads": [
+    {
+      "name_pattern": "rocksdb:low",
+      "role": "background",
+      "purpose": "Low-priority thread pool: executes automatic compaction jobs (merging SST files across LSM levels) and overflow flush jobs when the high-priority pool is empty. Compaction is CPU-intensive (decompress, merge-sort, recompress) and the primary source of CPU contention with foreground threads.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:l",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:high",
+      "role": "background",
+      "purpose": "High-priority thread pool: executes memtable flush jobs (writing immutable memtables to SST files on disk) and obsolete file purge operations. Flushes are I/O-heavy and run asynchronously; delaying them does not directly affect read latency, though sustained delay can eventually cause write stalls.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:h",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:bottom",
+      "role": "background",
+      "purpose": "Bottom-priority thread pool: executes the lowest-priority compaction jobs (typically large bottom-level compactions that are most CPU and I/O intensive). These are explicitly marked as the least time-sensitive background work.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:b",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:user",
+      "role": "background",
+      "purpose": "User-priority thread pool: executes user-initiated compaction jobs (e.g., CompactRange API calls). Although triggered by the user, the compaction work itself is CPU-intensive background processing that should not preempt foreground query threads.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:u",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "backup_engine",
+      "role": "background",
+      "purpose": "Backup engine worker threads: copy database files for backup operations. Purely background I/O work that only runs during explicit backup requests.",
+      "identification": {
+        "type": "comm_exact",
+        "comm_prefix": "backup_engine",
+        "comm_length": 13,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}

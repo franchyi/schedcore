@@ -1,0 +1,57 @@
+{
+  "application": "rocksdb",
+  "source_path": "workloads/rocksdb/rocksdb/",
+  "language": "cpp",
+  "identification_method": "comm",
+  "rationale": "RocksDB is an LSM-tree storage engine where user-facing read/write operations execute on application threads (e.g., db_bench workers) while internal maintenance — compaction, memtable flush, and obsolete file purging — runs on dedicated background thread pools named 'rocksdb:bottom', 'rocksdb:low', and 'rocksdb:high'. Under CPU oversubscription, these background threads compete with foreground threads for CPU time, causing tail latency spikes on reads and writes. By deprioritizing all 'rocksdb:*' threads via a custom BPF scheduler, foreground threads get preferential CPU access, dramatically reducing P99/P99.9 latency while background maintenance continues at reduced priority with minimal throughput impact.",
+  "threads": [
+    {
+      "name_pattern": "rocksdb:bottom",
+      "role": "background",
+      "purpose": "Lowest-priority compaction pool. Handles large, long-running LSM-tree compactions that are explicitly scheduled at BOTTOM priority to minimize interference with other operations.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:low",
+      "role": "background",
+      "purpose": "Regular compaction pool and flush overflow. Handles standard LSM-tree compactions and memtable flushes when the HIGH priority pool is saturated. This is the primary compaction pool controlled by max_background_compactions.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:high",
+      "role": "background",
+      "purpose": "Memtable flush and file purge pool. Flushes in-memory write buffers (memtables) to SST files on disk and purges obsolete files. While flushes are more time-sensitive than compaction (write stalls can occur if flushes fall behind), they are not on the direct user read/write request path.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:user",
+      "role": "background",
+      "purpose": "User-priority thread pool. Rarely used in standard configurations; available for application-specific background scheduling via the Env API.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}

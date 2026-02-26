@@ -1,0 +1,69 @@
+{
+  "application": "rocksdb",
+  "source_path": "workloads/rocksdb/rocksdb/",
+  "language": "cpp",
+  "identification_method": "comm",
+  "rationale": "RocksDB is an LSM-tree key-value store where user-facing read/write operations (Get, Put, Seek, MultiGet) execute on application threads, while background maintenance work (compaction, memtable flush, file deletion) runs on dedicated thread pools named 'rocksdb:low', 'rocksdb:high', and 'rocksdb:bottom'. Under CPU oversubscription, these background threads compete with foreground query threads for CPU time, causing tail latency spikes. All RocksDB internal threads share the common prefix 'rocksdb:' (8 bytes), enabling a single prefix match to classify them as background. By deprioritizing all 'rocksdb:*' threads into a low-priority dispatch queue while letting application threads use the kernel's default fast path, the scheduler eliminates interference from compaction and flush work on the latency-critical read/write path. The backup_engine thread is separately named but serves the same background role.",
+  "threads": [
+    {
+      "name_pattern": "rocksdb:low*",
+      "role": "background",
+      "purpose": "LOW priority thread pool: executes LSM-tree compaction jobs that merge and reorganize SST files across levels. CPU-intensive and long-running. Scheduled via Env::Schedule with Env::Priority::LOW.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:l",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:high*",
+      "role": "background",
+      "purpose": "HIGH priority thread pool: executes memtable flush jobs (writing in-memory data to SST files on disk) and obsolete file purge operations. While flush delays can eventually trigger write stalls, these threads do not directly serve user read/write requests.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:h",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:bottom*",
+      "role": "background",
+      "purpose": "BOTTOM priority thread pool: executes bottommost-level compaction in universal compaction style. Lowest priority background work, only used when the BOTTOM pool is explicitly configured with threads.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:b",
+        "comm_length": 9,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "rocksdb:*",
+      "role": "background",
+      "purpose": "Catch-all for any RocksDB internal thread pool thread. All RocksDB background threads (compaction, flush, bottom-priority, and user-priority pools) share the 'rocksdb:' prefix. This single prefix match captures all internal thread types with minimal BPF overhead.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "rocksdb:",
+        "comm_length": 8,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "backup_engine",
+      "role": "background",
+      "purpose": "Backup engine worker threads that process backup items in parallel. Created by BackupEngine for copying SST files during backup operations. Named 'backup_engine' without the 'rocksdb:' prefix.",
+      "identification": {
+        "type": "comm_exact",
+        "comm_prefix": "backup_engine",
+        "comm_length": 13,
+        "function_symbol": null,
+        "library_path": null
+      }
+    }
+  ]
+}
