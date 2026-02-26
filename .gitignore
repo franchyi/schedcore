@@ -1,18 +1,4 @@
 .claude/settings.local.json
-cpu_bin
 venv/
 __pycache__
-results_*.json
-bcc
-schedcp.log.*
-/schedcp_workloads.json
-
-# Custom scheduler executables
-scheduler/custom_schedulers/scx_cxl
-scheduler/custom_schedulers/scx_cxl_rl
-scheduler/custom_schedulers/scx_simple_cxl_pmu
-scheduler/custom_schedulers/scx_pmu
-
-# BPF object files and skeletons
-scheduler/custom_schedulers/*.bpf.o
-scheduler/custom_schedulers/*.bpf.skel.h
+*.bpf.o

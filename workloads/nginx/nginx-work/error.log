@@ -1,0 +1,32 @@
+2026/02/24 14:51:38 [notice] 178762#178762: signal process started
+2026/02/24 14:51:38 [error] 178762#178762: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 14:53:21 [notice] 183826#183826: signal process started
+2026/02/24 14:53:26 [notice] 183891#183891: signal process started
+2026/02/24 14:53:26 [error] 183891#183891: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 14:55:10 [notice] 184697#184697: signal process started
+2026/02/24 14:55:15 [notice] 184992#184992: signal process started
+2026/02/24 14:55:15 [error] 184992#184992: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 14:56:43 [notice] 186605#186605: signal process started
+2026/02/24 14:56:43 [error] 186605#186605: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 14:58:27 [notice] 188234#188234: signal process started
+2026/02/24 14:58:32 [notice] 188461#188461: signal process started
+2026/02/24 14:58:32 [error] 188461#188461: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:00:15 [notice] 194248#194248: signal process started
+2026/02/24 15:00:20 [notice] 194760#194760: signal process started
+2026/02/24 15:00:20 [error] 194760#194760: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:02:57 [notice] 201180#201180: signal process started
+2026/02/24 15:02:57 [error] 201180#201180: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:04:40 [notice] 206800#206800: signal process started
+2026/02/24 15:04:45 [notice] 207083#207083: signal process started
+2026/02/24 15:04:45 [error] 207083#207083: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:06:28 [notice] 212165#212165: signal process started
+2026/02/24 15:06:33 [notice] 212461#212461: signal process started
+2026/02/24 15:06:33 [error] 212461#212461: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:08:12 [notice] 213275#213275: signal process started
+2026/02/24 15:08:12 [error] 213275#213275: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:09:55 [notice] 214139#214139: signal process started
+2026/02/24 15:10:00 [notice] 214203#214203: signal process started
+2026/02/24 15:10:00 [error] 214203#214203: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)
+2026/02/24 15:11:44 [notice] 215057#215057: signal process started
+2026/02/24 15:11:49 [notice] 215354#215354: signal process started
+2026/02/24 15:11:49 [error] 215354#215354: open() "/home/ubuntu/schedcp/workloads/nginx/nginx-work/nginx.pid" failed (2: No such file or directory)

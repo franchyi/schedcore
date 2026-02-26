@@ -4,21 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**schedcp** is a research project exploring **Application-Aware Kernel Scheduling via LLM-Driven Scheduler Synthesis**. The core idea: an LLM analyzes application source code to identify thread roles (latency-critical vs. background), then automatically generates, compiles, and deploys a custom BPF kernel scheduler via the Linux sched-ext framework — eliminating tail latency without modifying the application.
+**schedcp** is a research project exploring **Application-Aware Kernel Scheduling via LLM-Driven Thread Discovery**. The core idea: an LLM + static analysis identifies thread roles (latency-critical vs. background) from application source code, enabling developers to write custom BPF kernel schedulers via the Linux sched-ext framework — eliminating tail latency without modifying the application.
 
-The project builds on a scheduler management infrastructure (MCP server, scheduler library, benchmarking tools) and adds a closed-loop pipeline where the LLM is the scheduler author:
-
-```
-Application Source Code → LLM Analysis → BPF Scheduler Generation →
-Compile & Verify → Deploy & Benchmark → Feedback & Iterate
-```
+The LLM's role is **thread discovery**, not scheduler generation. BPF schedulers are hand-written systems engineering, guided by the thread classification the pipeline provides.
 
 ### Research Results (Current)
 
 | Workload | Scheduler | Key Result |
 |---|---|---|
 | **db_sim** (synthetic DB) | `db_aware` | 79x max latency reduction (25.9ms → 0.33ms) |
-| **RocksDB db_bench** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction |
 | **RocksDB db_bench** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction, -3.6% throughput |
 | **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET), +15-20% throughput |
 | **Nginx** (HTTP + CPU oversubscription) | `nginx_aware` v3 | **83% P99 reduction**, 87% P99.9 reduction, 0% throughput impact |
@@ -30,65 +24,47 @@ See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evo
 ```
 schedcp/
 ├── CLAUDE.md                      # This file
-├── document/
-│   ├── IMPLEMENTATION_PLAN.md     # Full research plan, design, and results
-│   ├── CLAUDE_ORIGINAL.md         # Original schedcp CLAUDE.md (infrastructure reference)
-│   ├── 2509.01245v2.pdf/txt       # Research paper
-│   └── schedcp/                   # Original schedcp infrastructure docs
-│       ├── AI_AGENTS.md, USAGE_GUIDE.md, PROJECT_STRUCTURE.md
-│       ├── schedcp-design.md, sched-agent-design.md, devlog.md
-│       ├── design.png, linux.gif, schbench-optimize.gif
-│       ├── devlog/                # Development logs
-│       ├── motivation_exp/        # Motivation experiments
-│       └── scx/                   # sched-ext documentation
+├── pipeline/                      # LLM-driven thread discovery
+│   ├── stage1a_static_analysis.py # Tree-sitter thread extraction (deterministic)
+│   ├── stage1_thread_discovery.prompt.md  # LLM classification prompt template
+│   ├── run_stage1.sh              # Pipeline runner (Stage 1a → 1b)
+│   ├── verify_manifest.py         # Result validation against ground truth
+│   ├── thread_manifest.schema.json # Thread Manifest JSON schema
+│   ├── examples/                  # Ground-truth thread manifests
+│   └── results/                   # Generated pipeline outputs
 │
 ├── workloads/                     # Application workloads and custom schedulers
-│   ├── db_sim/                    # Synthetic DB workload (controlled experiment)
+│   ├── db_sim/                    # Synthetic DB workload
 │   │   ├── db_sim.c               # Multi-threaded query + compaction simulation
-│   │   ├── db_aware.bpf.c         # LLM-generated BPF scheduler (dual DSQ)
+│   │   ├── db_aware.bpf.c         # BPF scheduler (dual DSQ)
 │   │   ├── Makefile               # Builds db_sim + db_aware.bpf.o
-│   │   └── db_sim_bench.py        # Automated benchmark (CFS vs bpfland vs db_aware)
+│   │   └── db_sim_bench.py        # Automated benchmark
 │   ├── rocksdb/                   # Real-world RocksDB workload
-│   │   ├── rocksdb_aware.bpf.c    # LLM-generated BPF scheduler (v6, asymmetric DSQ)
+│   │   ├── rocksdb_aware.bpf.c    # BPF scheduler (asymmetric DSQ + selective preemption)
 │   │   ├── rocksdb_sched_bench.py # Automated benchmark script
 │   │   └── rocksdb/               # RocksDB source (cloned, db_bench built)
 │   ├── redis/                     # Redis cache workload
-│   │   ├── redis_aware.bpf.c      # LLM-generated BPF scheduler (dual DSQ)
+│   │   ├── redis_aware.bpf.c      # BPF scheduler (dual DSQ + selective preemption)
 │   │   ├── redis_bench_compare.sh # A/B benchmark script (CFS vs redis_aware)
 │   │   └── redis-src/             # Redis source (git submodule)
-│   ├── nginx/                     # Nginx web server workload
-│   │   ├── nginx_aware.bpf.c      # LLM-generated BPF scheduler (asymmetric + task storage)
-│   │   ├── nginx_bench_compare.sh # Self-contained A/B benchmark (builds nginx + wrk2)
-│   │   └── nginx.conf             # Nginx config template (16 workers)
-│   └── schedcp_legacy/            # Original schedcp benchmark workloads
-│       ├── basic/                 # schbench latency benchmark
-│       ├── llama.cpp/             # LLM inference workload
-│       ├── cxl-micro/             # Memory subsystem benchmark
-│       └── ...                    # nginx, faiss, pytorch, vllm, etc.
+│   └── nginx/                     # Nginx web server workload
+│       ├── nginx_aware.bpf.c      # BPF scheduler (asymmetric + task storage)
+│       ├── nginx_bench_compare.sh # Self-contained A/B benchmark
+│       └── nginx.conf             # Nginx config template (16 workers)
 │
-├── mcp/                           # MCP server (scheduler management infrastructure)
-│   ├── src/
-│   │   ├── scheduler_manager.rs   # Scheduler lifecycle (built-in + custom)
-│   │   ├── scheduler_generator.rs # Custom BPF scheduler compilation/verification
-│   │   ├── system_monitor.rs      # Real-time CPU/memory/scheduler metrics
-│   │   ├── workload_profile.rs    # Workload classification and history
-│   │   ├── storage.rs             # Persistent performance data
-│   │   ├── main.rs                # MCP server entry point
-│   │   ├── lib.rs                 # Core MCP implementation
-│   │   └── cli.rs                 # CLI tool implementation
-│   ├── new_sched/                 # Custom scheduler working directory
-│   │   ├── loader                 # BPF loader binary for custom .bpf.o files
-│   │   ├── Makefile               # BPF compilation flags and include paths
-│   │   └── *.bpf.{c,o}           # Custom scheduler sources and compiled objects
-│   └── schedcp_workloads.json     # Performance history database
+├── mcp/new_sched/                 # BPF compilation infrastructure
+│   ├── loader                     # BPF loader binary
+│   ├── Makefile                   # BPF compilation flags and include paths
+│   └── *.bpf.{c,o}               # Custom scheduler sources and compiled objects
 │
-├── scheduler/                     # Scheduler build system and library
-│   ├── scx/                       # sched-ext framework (git submodule)
-│   ├── sche_bin/                  # Compiled scheduler binaries
-│   ├── scheduler_runner.py        # Python scheduler interface
-│   └── schedulers.json            # Scheduler metadata and capabilities
+├── scheduler/scx/                 # sched-ext framework (git submodule, headers only)
 │
-└── autotune/                      # Auto-tuning daemon (Rust)
+└── document/
+    ├── IMPLEMENTATION_PLAN.md     # Full research plan, design, and results
+    ├── future_plan.md             # Research roadmap
+    ├── CLAUDE_ORIGINAL.md         # Original schedcp infrastructure reference
+    ├── 2509.01245v2.pdf/txt       # Research paper
+    └── schedcp/                   # Original schedcp infrastructure docs
 ```
 
 ## Key Concepts
@@ -99,10 +75,10 @@ The Linux CFS/EEVDF scheduler treats all threads equally within a cgroup. It can
 
 ### The LLM-Driven Solution
 
-An LLM bridges this gap by:
-1. Reading application source code to identify thread roles and naming conventions
-2. Generating a BPF scheduler that classifies threads by `task_struct->comm` (thread name)
-3. Using sched-ext Dispatch Queues (DSQs) to prioritize latency-sensitive threads
+Static analysis (tree-sitter) + LLM bridges this gap by:
+1. Extracting all thread creation and naming sites from application source code (Stage 1a)
+2. Classifying each thread type as foreground or background (Stage 1b)
+3. Producing a Thread Manifest that guides BPF scheduler design
 
 ### The Asymmetric Design Principle (Key Finding)
 
@@ -142,19 +118,6 @@ make -f ../../mcp/new_sched/Makefile BPF_SRC=scheduler.bpf.c \
 
 # Or from workloads/db_sim with its own Makefile
 cd workloads/db_sim && make
-```
-
-### MCP Server and CLI
-```bash
-cd mcp && cargo build --release
-# mcp/target/release/schedcp     (MCP server)
-# mcp/target/release/schedcp-cli (CLI tool)
-```
-
-### Built-in Schedulers
-```bash
-cd scheduler && make deps && make
-make install  # Install to ~/.schedcp/scxbin/
 ```
 
 ### Workload-Specific Builds
@@ -234,65 +197,39 @@ make -f ../../mcp/new_sched/Makefile BPF_SRC=nginx_aware.bpf.c \
 sudo ./nginx_bench_compare.sh 3
 ```
 
-### Via MCP Tools (AI-Assisted)
-```
-list_schedulers                        # See available schedulers
-create_and_verify_scheduler source=... # Compile + kernel verify custom scheduler
-run_scheduler name=<scheduler>         # Start scheduler
-get_execution_status                   # Check scheduler output/status
-stop_scheduler                         # Clean stop
-system_monitor start/stop              # Collect CPU/memory metrics
-workload create/list/get_history       # Manage workload profiles
-```
-
 ## Development Patterns
 
 ### Adding a New Application Workload
 
 1. Create directory under `workloads/<app_name>/`
-2. Identify thread naming conventions in the application source code
-3. Write a BPF scheduler (`.bpf.c`) that classifies threads by `p->comm`:
+2. Run thread discovery pipeline: `./pipeline/run_stage1.sh <app_name> <source_path> <language> <description>`
+3. Review the Thread Manifest — identify background vs foreground threads
+4. Write a BPF scheduler (`.bpf.c`) that classifies threads by `p->comm`:
    - Background threads → custom `BACKGROUND_DSQ` (low priority, long slice)
    - Foreground threads → `SCX_DSQ_GLOBAL` (framework fast path, minimal overhead)
    - Idle CPU fast path → `SCX_DSQ_LOCAL` in `select_cpu`
-4. Compile with: `make -f ../../mcp/new_sched/Makefile BPF_SRC=... BPF_OBJ=...`
-5. Write benchmark script following `db_sim_bench.py` or `rocksdb_sched_bench.py` patterns
-6. Run A/B test: CFS baseline vs custom scheduler
-7. Report: P50, P99, P99.9, P99.99, max latency, throughput
+5. Compile with: `make -f ../../mcp/new_sched/Makefile BPF_SRC=... BPF_OBJ=...`
+6. Write benchmark script following `db_sim_bench.py` or `redis_bench_compare.sh` patterns
+7. Run A/B test: CFS baseline vs custom scheduler
+8. Report: P50, P99, P99.9, P99.99, max latency, throughput
 
 ### Design Guidelines for Custom Schedulers
 
-- **Use the asymmetric pattern (v6):** foreground → `SCX_DSQ_GLOBAL`, background → custom DSQ
+- **Use the asymmetric pattern:** foreground → `SCX_DSQ_GLOBAL`, background → custom DSQ
 - **Avoid custom foreground DSQs** — they add BPF dispatch overhead that hurts P99.9
 - **Give background threads long slices** (20ms) to reduce context-switch overhead
 - **Always implement the idle CPU fast path** in `select_cpu` → `SCX_DSQ_LOCAL`
 - **Use byte-by-byte comm comparison** — BPF verifier disallows `strcmp`/`strncmp`
 - **Test with CPU oversubscription** — the scheduler's value shows when threads > CPUs
 
-### MCP Infrastructure (Reference)
-
-The MCP server (`mcp/src/`) provides the automation layer:
-
-- **scheduler_manager.rs**: Lifecycle management for built-in and custom schedulers
-- **scheduler_generator.rs**: Compiles `.bpf.c` → `.bpf.o` with clang, loads into kernel for verification
-- **system_monitor.rs**: Collects CPU/memory/scheduler metrics from `/proc`
-- **workload_profile.rs**: Natural language workload descriptions + performance history
-- **storage.rs**: Persists workload data in `schedcp_workloads.json`
-
-See `document/CLAUDE_ORIGINAL.md` for detailed MCP architecture documentation.
-
 ## Requirements and Environment
 
 - Linux kernel 6.12+ with sched-ext support
 - Clang/LLVM >= 16 (17 recommended)
-- Rust toolchain >= 1.82
-- Meson >= 1.2.0, libbpf >= 1.2.2
 - Root privileges required for scheduler loading
-- For MCP: set `SCHEDCP_SUDO_PASSWORD` env var or configure passwordless sudo
 
 ## Key References
 
 - `document/IMPLEMENTATION_PLAN.md` — Full research plan, design evolution (v1→v6), all results
-- `document/CLAUDE_ORIGINAL.md` — Original schedcp infrastructure documentation
-- `scheduler/schedulers.json` — Metadata for all built-in schedulers
+- `document/future_plan.md` — Research roadmap
 - `mcp/new_sched/Makefile` — BPF compilation flags and include paths

@@ -1,11 +1,6 @@
-# Application-Aware Kernel Scheduling via LLM-Driven Scheduler Synthesis
+# Application-Aware Kernel Scheduling via LLM-Driven Thread Discovery
 
-An LLM reads application source code, identifies thread roles (latency-critical vs. background), and automatically generates a custom BPF kernel scheduler via Linux [sched-ext](https://github.com/sched-ext/scx) — eliminating tail latency **without modifying the application**.
-
-```
-Application Source Code → LLM Analysis → BPF Scheduler Generation →
-Compile & Verify → Deploy & Benchmark → Feedback & Iterate
-```
+An LLM reads application source code, identifies thread roles (latency-critical vs. background), enabling developers to write custom BPF kernel schedulers via Linux [sched-ext](https://github.com/sched-ext/scx) — eliminating tail latency **without modifying the application**.
 
 ## The Problem
 
@@ -15,22 +10,21 @@ This is a **semantic gap**: the kernel has scheduling mechanisms (priorities, qu
 
 ## The Solution
 
-An LLM bridges this gap by:
-1. Reading application source code to identify thread roles and naming conventions
-2. Generating a BPF scheduler that classifies threads by `task_struct->comm` (thread name)
-3. Using sched-ext Dispatch Queues (DSQs) to prioritize latency-sensitive threads
-4. Iterating on the scheduler design based on benchmark feedback
+Static analysis (tree-sitter) + LLM bridges this gap by:
+1. Extracting all thread creation and naming sites from application source code
+2. Classifying each thread type as foreground (latency-critical) or background
+3. Producing a Thread Manifest that guides hand-written BPF scheduler design
 
-No application changes required. No manual configuration. The LLM is the scheduler author.
+The BPF scheduler classifies threads by `task_struct->comm` (thread name) and uses sched-ext Dispatch Queues (DSQs) to prioritize latency-sensitive threads. No application changes required.
 
 ## Key Results
 
 | Workload | Scheduler | Key Result | Throughput Impact |
 |---|---|---|---|
 | **db_sim** (synthetic DB) | `db_aware` | 79x max latency reduction (25.9ms → 0.33ms) | Neutral |
-| **RocksDB** (read-only) | `rocksdb_aware` v6 | 0% P99.9 regression, 60% max latency reduction | Neutral |
 | **RocksDB** (stress) | `rocksdb_aware` v7 | **67.8% P99.9 reduction**, 77% P99.99 reduction | -3.6% |
 | **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET) | +15-20% |
+| **Nginx** (HTTP + CPU oversubscription) | `nginx_aware` v3 | **83% P99 reduction**, 87% P99.9 reduction | Neutral |
 
 ## Key Finding: The Asymmetric Design Principle
 
@@ -43,19 +37,22 @@ Routing foreground threads through a custom DSQ adds BPF dispatch overhead that 
 ## Repository Structure
 
 ```
+pipeline/                # LLM-driven thread discovery
+├── stage1a_static_analysis.py   # Tree-sitter thread extraction
+├── stage1_thread_discovery.prompt.md  # LLM classification prompt
+├── run_stage1.sh        # Pipeline runner
+├── verify_manifest.py   # Result validation
+└── examples/            # Ground-truth thread manifests
+
 workloads/
 ├── db_sim/              # Synthetic DB workload + db_aware BPF scheduler
 ├── rocksdb/             # RocksDB workload + rocksdb_aware BPF scheduler
 ├── redis/               # Redis workload + redis_aware BPF scheduler
-└── schedcp_legacy/      # Original schedcp benchmark workloads
+└── nginx/               # Nginx workload + nginx_aware BPF scheduler
 
-document/
-├── IMPLEMENTATION_PLAN.md   # Full research plan, design evolution (v1→v7), all results
-└── schedcp/                 # Original schedcp infrastructure docs
-
-mcp/                     # MCP server (scheduler compilation, deployment, monitoring)
-scheduler/               # sched-ext framework and built-in scheduler binaries
-autotune/                # Auto-tuning daemon
+mcp/new_sched/           # BPF compilation (Makefile + loader)
+scheduler/scx/           # sched-ext framework headers (git submodule)
+document/                # Research documentation
 ```
 
 ## Quick Start
@@ -66,12 +63,11 @@ autotune/                # Auto-tuning daemon
 - Clang/LLVM >= 16 (17 recommended)
 - Root privileges for scheduler loading
 
-### Build Infrastructure
+### Build
 
 ```bash
 git submodule update --init --recursive scheduler/scx
-cd scheduler && make && make install && cd ..
-cd mcp && cargo build --release && cd ..
+make   # builds mcp/new_sched/loader
 ```
 
 ### Run an Experiment (db_sim example)
@@ -82,19 +78,13 @@ cd workloads/db_sim && make
 # CFS baseline (32 threads on 16 CPUs — oversubscribed)
 ./db_sim -q 8 -c 24 -d 15
 
-# With LLM-generated scheduler
+# With application-aware scheduler
 sudo ../../mcp/new_sched/loader ./db_aware.bpf.o &
 ./db_sim -q 8 -c 24 -d 15
 sudo pkill -f "loader.*db_aware"
 ```
 
 See [IMPLEMENTATION_PLAN.md](document/IMPLEMENTATION_PLAN.md) for full experiment details, design evolution, and all results.
-
-## Built On
-
-This project builds on [**schedcp**](https://github.com/eunomia-bpf/schedcp) — an MCP server for AI-driven Linux scheduler management. schedcp provides the infrastructure layer: scheduler compilation, deployment, monitoring, and workload profiling. See [document/schedcp/](document/schedcp/) for the original schedcp documentation.
-
-Paper: [SchedCP: Towards Agentic OS](https://arxiv.org/abs/2509.01245)
 
 ## License
 

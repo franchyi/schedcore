@@ -1,9 +1,0 @@
-*.o
-*.bpf.skel.h
-*.bpf.o
-*.bpf.l1o
-*.bpf.l2o
-*.bpf.l3o
-scx_simple
-loader
-example
