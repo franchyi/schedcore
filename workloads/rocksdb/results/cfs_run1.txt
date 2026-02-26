@@ -1,3 +1,0 @@
-readrandomwriterandom :     107.453 micros/op 148706 ops/sec 30.099 seconds 4475984 operations; ( reads:253800 writes:28199 total:1000000 found:178697)
-Percentiles: P50: 89.18 P75: 111.47 P99: 235.03 P99.9: 3738.17 P99.99: 7955.03
-Percentiles: P50: 16.70 P75: 30.16 P99: 1542.91 P99.9: 9493.33 P99.99: 122156.00

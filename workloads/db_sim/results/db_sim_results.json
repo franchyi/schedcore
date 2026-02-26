@@ -1,0 +1,42 @@
+{
+  "CFS (default)": {
+    "config": {
+      "query_threads": 8,
+      "compact_threads": 24,
+      "duration_sec": 15,
+      "sleep_us": 2000
+    },
+    "query_latency_us": {
+      "samples": 30261,
+      "avg": 160.0,
+      "min": 113.2,
+      "p50": 156.3,
+      "p99": 173.0,
+      "max": 6169.5
+    },
+    "compaction_throughput": {
+      "total_ops": 72011,
+      "ops_per_sec": 4800.7
+    }
+  },
+  "db_aware": {
+    "config": {
+      "query_threads": 8,
+      "compact_threads": 24,
+      "duration_sec": 15,
+      "sleep_us": 2000
+    },
+    "query_latency_us": {
+      "samples": 17619,
+      "avg": 159.8,
+      "min": 113.0,
+      "p50": 156.3,
+      "p99": 185.5,
+      "max": 302.4
+    },
+    "compaction_throughput": {
+      "total_ops": 73908,
+      "ops_per_sec": 4927.2
+    }
+  }
+}

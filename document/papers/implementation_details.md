@@ -4,7 +4,7 @@ This document explains, with precise code references, how our framework translat
 
 **Source files:**
 - `workloads/db_sim/db_aware.bpf.c` — synthetic database (simplest, dual-DSQ)
-- `workloads/rocksdb/rocksdb_aware.bpf.c` — RocksDB (selective preemption)
+- `workloads/rocksdb_dbbench/rocksdb_aware.bpf.c` — RocksDB (selective preemption)
 - `workloads/redis/redis_aware.bpf.c` — Redis (multi-pattern matching, selective preemption)
 - `workloads/nginx/nginx_aware.bpf.c` — Nginx (asymmetric design, task local storage caching)
 

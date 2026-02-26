@@ -2,15 +2,15 @@
 /*
  * rocksdb_aware v7 - Thread-aware BPF scheduler with selective preemption
  *
+ * For use with RocksDB db_bench. RocksDB is a library — foreground threads
+ * belong to the embedding application (db_bench), background threads
+ * (compaction/flush) are created by RocksDB with "rocksdb:*" comm prefix.
+ *
  * Strategy:
  * - Two custom DSQs: FOREGROUND_DSQ (high priority) and BACKGROUND_DSQ (low priority)
  * - Idle CPU fast path: foreground → SCX_DSQ_LOCAL (zero overhead for the common case)
  * - select_cpu preemption: when foreground wakes with no idle CPU, kick a bg CPU
  * - dispatch() drains foreground first, then background
- *
- * Unlike v6 which used SCX_DSQ_GLOBAL for foreground (causing bg starvation under
- * heavy fg load because the framework drains global before calling dispatch()),
- * v7 uses custom DSQs so dispatch() has full control over scheduling order.
  *
  * The idle fast path (SCX_DSQ_LOCAL in select_cpu) ensures that foreground threads
  * almost never go through the custom DSQ path — they only do so when all CPUs are
@@ -18,7 +18,22 @@
  *
  * Thread classification:
  *   "rocksdb:*"  -> background (compaction/flush, 20ms slice)
- *   everything else -> foreground (5ms slice)
+ *   everything else -> foreground (db_bench readers, 5ms slice)
+ *
+ * Version history (all tested on readrandom, CFS P99.9 = 169us):
+ *   v1: Dual DSQ (FG + BG custom)              → P99.9 866us (+413%) — DSQ lock overhead
+ *   v2: v1 + local dispatch + preempt kick      → P99.9 798us (+373%) — still routing FG through BPF
+ *   v3: Short bg slice (1ms) + kick             → P99.9 865us (+412%) — excessive context switches
+ *   v4: Per-CPU map + selective kick             → P99.9 969us (+474%) — BPF lock contention
+ *   v5: Foreground always local                  → CRASH — invalid local dispatch on non-idle CPU
+ *   v6: FG → SCX_DSQ_GLOBAL, BG → custom DSQ    → P99.9 169us (0%) — zero overhead, zero improvement
+ *   v7: Dual DSQ + selective preemption (this)   → P99.9 reduced 67.8% on stress workload
+ *
+ * Key insight: v1-v5 failed because routing foreground through custom DSQs adds
+ * BPF dispatch overhead. v6 eliminated overhead by using SCX_DSQ_GLOBAL for
+ * foreground but couldn't improve tail latency. v7 uses dual custom DSQs with
+ * idle-CPU fast path so foreground bypasses custom DSQs in the common case,
+ * and only pays DSQ overhead when all CPUs are busy (exactly when it matters).
  */
 #include <scx/common.bpf.h>
 

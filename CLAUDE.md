@@ -39,9 +39,9 @@ schedcp/
 │   │   ├── db_aware.bpf.c         # BPF scheduler (dual DSQ)
 │   │   ├── Makefile               # Builds db_sim + db_aware.bpf.o
 │   │   └── db_sim_bench.py        # Automated benchmark
-│   ├── rocksdb/                   # Real-world RocksDB workload
-│   │   ├── rocksdb_aware.bpf.c    # BPF scheduler (asymmetric DSQ + selective preemption)
-│   │   ├── rocksdb_sched_bench.py # Automated benchmark script
+│   ├── rocksdb_dbbench/            # RocksDB db_bench workload
+│   │   ├── rocksdb_aware.bpf.c    # BPF scheduler v7 (dual DSQ + selective preemption)
+│   │   ├── bench_compare.sh       # A/B benchmark script (CFS vs v7)
 │   │   └── rocksdb/               # RocksDB source (cloned, db_bench built)
 │   ├── redis/                     # Redis cache workload
 │   │   ├── redis_aware.bpf.c      # BPF scheduler (dual DSQ + selective preemption)
@@ -124,7 +124,7 @@ cd workloads/db_sim && make
 cd workloads/db_sim && make
 
 # RocksDB (real-world)
-cd workloads/rocksdb/rocksdb && make db_bench -j$(nproc)
+cd workloads/rocksdb_dbbench/rocksdb && make db_bench -j$(nproc)
 ```
 
 ## Running Experiments
@@ -162,7 +162,7 @@ sudo pkill -f "loader.*db_aware"
 
 ### RocksDB Experiment
 ```bash
-cd workloads/rocksdb
+cd workloads/rocksdb_dbbench
 
 # Populate
 rm -rf /tmp/rocksdb_bench_test && mkdir -p /tmp/rocksdb_bench_test

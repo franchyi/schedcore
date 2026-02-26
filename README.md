@@ -46,7 +46,7 @@ pipeline/                # LLM-driven thread discovery
 
 workloads/
 ├── db_sim/              # Synthetic DB workload + db_aware BPF scheduler
-├── rocksdb/             # RocksDB workload + rocksdb_aware BPF scheduler
+├── rocksdb_dbbench/     # RocksDB db_bench workload + rocksdb_aware v7 BPF scheduler
 ├── redis/               # Redis workload + redis_aware BPF scheduler
 └── nginx/               # Nginx workload + nginx_aware BPF scheduler
 

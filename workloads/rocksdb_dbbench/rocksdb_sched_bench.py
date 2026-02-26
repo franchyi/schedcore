@@ -331,7 +331,7 @@ def generate_chart(all_results):
 def main():
     if not os.path.exists(DB_BENCH):
         print(f"Error: db_bench not found at {DB_BENCH}")
-        print("Run 'make build' in workloads/rocksdb/ first.")
+        print("Run 'make build' in workloads/rocksdb_dbbench/ first.")
         sys.exit(1)
 
     configs = [

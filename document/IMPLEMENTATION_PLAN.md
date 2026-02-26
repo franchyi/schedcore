@@ -165,8 +165,8 @@ This uses the simpler dual-DSQ pattern (not v6) because in the synthetic workloa
 
 | File | Lines | Purpose |
 |---|---|---|
-| `workloads/rocksdb/rocksdb_aware.bpf.c` | 99 | Custom BPF scheduler (v6 design) |
-| `workloads/rocksdb/rocksdb/` | — | RocksDB source (cloned from GitHub, built from source) |
+| `workloads/rocksdb_dbbench/rocksdb_aware.bpf.c` | 99 | Custom BPF scheduler (v6 design) |
+| `workloads/rocksdb_dbbench/rocksdb/` | — | RocksDB source (cloned from GitHub, built from source) |
 
 **Thread classification:**
 
@@ -285,7 +285,7 @@ cd workloads/db_sim && make
 
 **RocksDB:**
 ```bash
-cd workloads/rocksdb/rocksdb && make db_bench -j$(nproc)
+cd workloads/rocksdb_dbbench/rocksdb && make db_bench -j$(nproc)
 # BPF scheduler compiled separately via bpf_loader/Makefile
 ```
 
@@ -646,7 +646,7 @@ sudo python3 db_sim_bench.py
 ### 8.2 RocksDB (Real-World)
 
 ```bash
-cd workloads/rocksdb
+cd workloads/rocksdb_dbbench
 
 # Build RocksDB (one-time)
 cd rocksdb && make db_bench -j$(nproc) && cd ..
@@ -759,7 +759,7 @@ workloads/db_sim/
 ├── db_sim_bench.py       # Automated benchmark (CFS vs bpfland vs db_aware)
 └── results/              # [generated] JSON + PNG results
 
-workloads/rocksdb/
+workloads/rocksdb_dbbench/
 ├── rocksdb_aware.bpf.c   # BPF scheduler v7: dual DSQ + selective preemption
 ├── bench_compare.sh      # Automated 3-run A/B comparison script
 ├── results/              # [generated] per-run latency results

@@ -2,11 +2,13 @@
 # A/B comparison: CFS vs v7 rocksdb_aware scheduler
 # Each run gets a fresh DB to eliminate state divergence
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DB_PATH="/tmp/rocksdb_bench_test"
-DB_BENCH="/home/ubuntu/schedcp/workloads/rocksdb/rocksdb/db_bench"
-LOADER="/home/ubuntu/schedcp/bpf_loader/loader"
-SCHED="/home/ubuntu/schedcp/workloads/rocksdb/rocksdb_aware.bpf.o"
-RESULTS_DIR="/home/ubuntu/schedcp/workloads/rocksdb/results"
+DB_BENCH="$SCRIPT_DIR/rocksdb/db_bench"
+LOADER="$PROJECT_ROOT/bpf_loader/loader"
+SCHED="$SCRIPT_DIR/rocksdb_aware.bpf.o"
+RESULTS_DIR="$SCRIPT_DIR/results"
 RUNS=3
 
 mkdir -p "$RESULTS_DIR"
