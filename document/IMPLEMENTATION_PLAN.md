@@ -743,49 +743,8 @@ sudo ./redis_bench_compare.sh 3
 ```bash
 cd workloads/nginx
 
-# Build everything (nginx submodule + wrk2 + BPF scheduler)
-# The benchmark script handles all builds automatically, or manually:
-git submodule update --init workloads/schedcp_legacy/nginx/nginx
-make -f ../../bpf_loader/Makefile BPF_SRC=nginx_aware.bpf.c \
-     BPF_OBJ=nginx_aware.bpf.o nginx_aware.bpf.o
-
-# Automated 3-run A/B comparison (recommended — builds everything if needed)
+# Automated 3-run A/B comparison (recommended — builds nginx + wrk2 if needed)
 sudo ./nginx_bench_compare.sh 3
-
-# Quick manual A/B test:
-# 1. Setup nginx working directory and start nginx
-mkdir -p nginx-work/html
-echo "<html><body><h1>test</h1></body></html>" > nginx-work/html/index.html
-cp ../schedcp_legacy/nginx/mime.types nginx-work/
-sed 's|NGINX_HTML_ROOT|'$PWD'/nginx-work/html|g' nginx.conf > nginx-work/nginx.conf
-../schedcp_legacy/nginx/nginx/objs/nginx -c $PWD/nginx-work/nginx.conf
-
-# 2. Start background CPU pressure (oversubscription)
-stress-ng --cpu 24 --cpu-method matrixprod --quiet &
-
-# 3. CFS baseline
-wrk2/wrk -t8 -c200 -d30s -R50000 --latency http://127.0.0.1:8080/
-
-# 4. Load nginx_aware scheduler and re-run
-sudo ../../bpf_loader/loader ./nginx_aware.bpf.o &
-wrk2/wrk -t8 -c200 -d30s -R50000 --latency http://127.0.0.1:8080/
-sudo pkill -f "loader.*nginx_aware"
-
-# 5. Cleanup
-pkill -f stress-ng
-../schedcp_legacy/nginx/nginx/objs/nginx -s quit -c $PWD/nginx-work/nginx.conf
-```
-
-### 8.5 Via MCP Tools (AI-Assisted)
-
-```
-1. list_schedulers                           → see available schedulers
-2. create_and_verify_scheduler source=...    → compile + kernel verify
-3. run_scheduler name=rocksdb_aware          → start custom scheduler
-4. [run benchmark via bash]                  → collect results
-5. get_execution_status                      → check scheduler output
-6. stop_scheduler                            → clean stop
-7. system_monitor start/stop                 → collect CPU/memory metrics
 ```
 
 ---

@@ -10,8 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LEGACY_DIR="$SCRIPT_DIR/../schedcp_legacy/nginx"
-NGINX_SRC="$LEGACY_DIR/nginx"
+NGINX_SRC="$SCRIPT_DIR/nginx-src"
 NGINX_BIN="$NGINX_SRC/objs/nginx"
 WRK2_DIR="$SCRIPT_DIR/wrk2"
 WRK2_BIN="$WRK2_DIR/wrk"
@@ -66,12 +65,10 @@ build_nginx() {
 
     echo "Building Nginx..."
 
-    # Init submodule if needed
+    # Clone nginx source if needed
     if [ ! -f "$NGINX_SRC/auto/configure" ]; then
-        echo "Initializing nginx submodule..."
-        cd "$SCRIPT_DIR/../.."
-        git submodule update --init workloads/schedcp_legacy/nginx/nginx
-        cd "$SCRIPT_DIR"
+        echo "Cloning nginx source..."
+        git clone --depth=1 https://github.com/nginx/nginx.git "$NGINX_SRC"
     fi
 
     # Install build deps
@@ -134,8 +131,8 @@ setup_nginx_workdir() {
     # Create test HTML page
     echo "<html><body><h1>Nginx Benchmark Test Page</h1><p>$(head -c 4096 /dev/urandom | base64)</p></body></html>" > "$HTML_DIR/index.html"
 
-    # Copy mime.types
-    cp "$LEGACY_DIR/mime.types" "$NGINX_WORK/mime.types"
+    # Copy mime.types from nginx source
+    cp "$NGINX_SRC/conf/mime.types" "$NGINX_WORK/mime.types"
 
     # Generate nginx.conf with correct paths
     sed "s|NGINX_HTML_ROOT|$HTML_DIR|g" "$SCRIPT_DIR/nginx.conf" > "$NGINX_CONF"
