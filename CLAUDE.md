@@ -62,9 +62,7 @@ schedcp/
 └── document/
     ├── IMPLEMENTATION_PLAN.md     # Full research plan, design, and results
     ├── future_plan.md             # Research roadmap
-    ├── CLAUDE_ORIGINAL.md         # Original schedcp infrastructure reference
-    ├── 2509.01245v2.pdf/txt       # Research paper
-    └── schedcp/                   # Original schedcp infrastructure docs
+    └── 2509.01245v2.pdf/txt       # Research paper
 ```
 
 ## Key Concepts
