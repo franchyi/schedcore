@@ -161,7 +161,7 @@ The AI assistant performs:
   - Compiles custom BPF schedulers from source
   - Verifies by loading in kernel for 10 seconds
   - Provides compilation error feedback
-  - Stores compiled schedulers in `mcp/new_sched/`
+  - Stores compiled schedulers in `bpf_loader/`
 
 #### Safety Mechanisms
 
@@ -538,7 +538,7 @@ This prompt guides the AI to act as the Observation and Planning agents.
      a) Validates source has required BPF ops
      b) Compiles with clang: scx_numa_aware.bpf.c → scx_numa_aware.bpf.o
      c) Loads in kernel for 10-second verification
-     d) Stores in mcp/new_sched/
+     d) Stores in bpf_loader/
    
    - Result: "custom:scx_numa_aware" available for use
 

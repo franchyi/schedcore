@@ -363,7 +363,7 @@ clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
     -c scheduler.bpf.c -o scheduler.bpf.o
 
 # Load into kernel (replaces current scheduler)
-sudo mcp/new_sched/loader ./scheduler.bpf.o
+sudo bpf_loader/loader ./scheduler.bpf.o
 ```
 
 Compilation takes <2 seconds. Loading is instantaneous. Unloading falls back to CFS.

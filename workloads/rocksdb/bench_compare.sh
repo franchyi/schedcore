@@ -4,7 +4,7 @@
 
 DB_PATH="/tmp/rocksdb_bench_test"
 DB_BENCH="/home/ubuntu/schedcp/workloads/rocksdb/rocksdb/db_bench"
-LOADER="/home/ubuntu/schedcp/mcp/new_sched/loader"
+LOADER="/home/ubuntu/schedcp/bpf_loader/loader"
 SCHED="/home/ubuntu/schedcp/workloads/rocksdb/rocksdb_aware.bpf.o"
 RESULTS_DIR="/home/ubuntu/schedcp/workloads/rocksdb/results"
 RUNS=3

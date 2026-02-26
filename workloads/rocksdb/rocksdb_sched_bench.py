@@ -25,7 +25,7 @@ PROJECT_ROOT = subprocess.check_output(
 
 DB_BENCH = os.path.join(SCRIPT_DIR, "rocksdb", "db_bench")
 ROCKSDB_AWARE_BPF = os.path.join(SCRIPT_DIR, "rocksdb_aware.bpf.o")
-LOADER = os.path.join(PROJECT_ROOT, "mcp", "new_sched", "loader")
+LOADER = os.path.join(PROJECT_ROOT, "bpf_loader", "loader")
 SCHED_BIN = os.path.expanduser("~/.schedcp/scxbin")
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 DB_PATH = "/tmp/rocksdb_bench_data"

@@ -594,7 +594,7 @@ clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
     -c nginx_aware.bpf.c -o nginx_aware.bpf.o
 
 # Load into kernel for verification + execution
-sudo ../../mcp/new_sched/loader ./nginx_aware.bpf.o
+sudo ../../bpf_loader/loader ./nginx_aware.bpf.o
 ```
 
 The BPF verifier checks:

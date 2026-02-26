@@ -286,7 +286,7 @@ cd workloads/db_sim && make
 **RocksDB:**
 ```bash
 cd workloads/rocksdb/rocksdb && make db_bench -j$(nproc)
-# BPF scheduler compiled separately via mcp/new_sched/Makefile
+# BPF scheduler compiled separately via bpf_loader/Makefile
 ```
 
 ### 4.7 MCP Integration
@@ -635,7 +635,7 @@ make
 ./db_sim -q 8 -c 24 -d 15
 
 # With db_aware scheduler
-sudo ../../mcp/new_sched/loader ./db_aware.bpf.o &
+sudo ../../bpf_loader/loader ./db_aware.bpf.o &
 ./db_sim -q 8 -c 24 -d 15
 sudo pkill -f "loader.*db_aware"
 
@@ -652,7 +652,7 @@ cd workloads/rocksdb
 cd rocksdb && make db_bench -j$(nproc) && cd ..
 
 # Compile scheduler
-make -f ../../mcp/new_sched/Makefile BPF_SRC=rocksdb_aware.bpf.c \
+make -f ../../bpf_loader/Makefile BPF_SRC=rocksdb_aware.bpf.c \
      BPF_OBJ=rocksdb_aware.bpf.o rocksdb_aware.bpf.o
 
 # Populate database (fresh each run for consistency)
@@ -677,7 +677,7 @@ rocksdb/db_bench --benchmarks=fillrandom --db=/tmp/rocksdb_bench_test \
     --level0_file_num_compaction_trigger=1000 --value_size=256
 
 # With rocksdb_aware v7 scheduler
-sudo ../../mcp/new_sched/loader ./rocksdb_aware.bpf.o &
+sudo ../../bpf_loader/loader ./rocksdb_aware.bpf.o &
 rocksdb/db_bench --benchmarks=readrandomwriterandom \
     --db=/tmp/rocksdb_bench_test --use_existing_db=1 \
     --threads=16 --readwritepercent=90 \
@@ -701,7 +701,7 @@ git submodule update --init workloads/redis/redis-src
 cd redis-src && make -j$(nproc) && cd ..
 
 # Compile scheduler
-make -f ../../mcp/new_sched/Makefile BPF_SRC=redis_aware.bpf.c \
+make -f ../../bpf_loader/Makefile BPF_SRC=redis_aware.bpf.c \
      BPF_OBJ=redis_aware.bpf.o redis_aware.bpf.o
 
 # Quick manual A/B test:
@@ -726,7 +726,7 @@ redis-src/src/redis-benchmark -p 6399 -t get,set -c 50 -n 500000 \
     -r 100000 -d 256 --csv
 
 # 6. Load redis_aware scheduler and re-run
-sudo ../../mcp/new_sched/loader ./redis_aware.bpf.o &
+sudo ../../bpf_loader/loader ./redis_aware.bpf.o &
 redis-src/src/redis-benchmark -p 6399 -t get,set -c 50 -n 500000 \
     -r 100000 -d 256 --csv
 sudo pkill -f "loader.*redis_aware"
@@ -746,7 +746,7 @@ cd workloads/nginx
 # Build everything (nginx submodule + wrk2 + BPF scheduler)
 # The benchmark script handles all builds automatically, or manually:
 git submodule update --init workloads/schedcp_legacy/nginx/nginx
-make -f ../../mcp/new_sched/Makefile BPF_SRC=nginx_aware.bpf.c \
+make -f ../../bpf_loader/Makefile BPF_SRC=nginx_aware.bpf.c \
      BPF_OBJ=nginx_aware.bpf.o nginx_aware.bpf.o
 
 # Automated 3-run A/B comparison (recommended — builds everything if needed)
@@ -767,7 +767,7 @@ stress-ng --cpu 24 --cpu-method matrixprod --quiet &
 wrk2/wrk -t8 -c200 -d30s -R50000 --latency http://127.0.0.1:8080/
 
 # 4. Load nginx_aware scheduler and re-run
-sudo ../../mcp/new_sched/loader ./nginx_aware.bpf.o &
+sudo ../../bpf_loader/loader ./nginx_aware.bpf.o &
 wrk2/wrk -t8 -c200 -d30s -R50000 --latency http://127.0.0.1:8080/
 sudo pkill -f "loader.*nginx_aware"
 
@@ -826,7 +826,7 @@ document/
 ├── IMPLEMENTATION_PLAN.md  # This document
 └── PAPER_PLAN.md           # [superseded by this document]
 
-mcp/new_sched/
+bpf_loader/
 ├── loader                # BPF loader binary for custom schedulers
 ├── Makefile              # BPF compilation flags and include paths
 └── *.bpf.o               # Compiled scheduler objects

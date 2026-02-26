@@ -168,13 +168,13 @@ The MCP server enables Claude to perform complete scheduler optimization workflo
 1. Use `create_and_verify_scheduler` tool with BPF C source code
 2. Scheduler is automatically compiled using clang with appropriate flags
 3. Verification loads the scheduler in kernel for 10 seconds to test
-4. Compiled scheduler stored in `mcp/new_sched/` directory
+4. Compiled scheduler stored in `bpf_loader/` directory
 5. Custom schedulers can be run via `run_scheduler` like built-in schedulers
 
 ### Custom Scheduler Architecture
 - **SchedulerGenerator** (private): Handles compilation and verification
   - Uses clang with BPF target and scx includes from `scheduler/scx/scheds/include`
-  - Compiles `.bpf.c` to `.bpf.o` in `mcp/new_sched/` directory
+  - Compiles `.bpf.c` to `.bpf.o` in `bpf_loader/` directory
   - Uses loader binary for kernel verification
 - **SchedulerManager** (public): Provides unified API for both built-in and custom schedulers
   - `create_execution()` automatically detects scheduler type (built-in vs custom)

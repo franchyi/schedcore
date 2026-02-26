@@ -120,7 +120,7 @@ mcp/
 - **Build process**:
   - Uses clang with BPF target (`-target bpf`)
   - Includes scx headers from `scheduler/scx/scheds/include`
-  - Generates BPF object files in `mcp/new_sched/`
+  - Generates BPF object files in `bpf_loader/`
   - Uses loader binary for kernel verification
 - **Safety**: All custom schedulers must pass verification before use
 

@@ -20,7 +20,7 @@ PROJECT_ROOT = subprocess.check_output(
 
 DB_SIM = os.path.join(SCRIPT_DIR, "db_sim")
 DB_AWARE_BPF = os.path.join(SCRIPT_DIR, "db_aware.bpf.o")
-LOADER = os.path.join(PROJECT_ROOT, "mcp", "new_sched", "loader")
+LOADER = os.path.join(PROJECT_ROOT, "bpf_loader", "loader")
 SCHED_BIN = os.path.expanduser("~/.schedcp/scxbin")
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)

@@ -15,7 +15,7 @@ NGINX_SRC="$LEGACY_DIR/nginx"
 NGINX_BIN="$NGINX_SRC/objs/nginx"
 WRK2_DIR="$SCRIPT_DIR/wrk2"
 WRK2_BIN="$WRK2_DIR/wrk"
-LOADER="$SCRIPT_DIR/../../mcp/new_sched/loader"
+LOADER="$SCRIPT_DIR/../../bpf_loader/loader"
 SCHEDULER_OBJ="$SCRIPT_DIR/nginx_aware.bpf.o"
 RESULTS_DIR="$SCRIPT_DIR/results"
 
@@ -121,7 +121,7 @@ compile_scheduler() {
     fi
 
     echo "Compiling nginx_aware BPF scheduler..."
-    make -C "$SCRIPT_DIR" -f "$SCRIPT_DIR/../../mcp/new_sched/Makefile" \
+    make -C "$SCRIPT_DIR" -f "$SCRIPT_DIR/../../bpf_loader/Makefile" \
         BPF_SRC=nginx_aware.bpf.c BPF_OBJ=nginx_aware.bpf.o nginx_aware.bpf.o
     echo "Scheduler compiled successfully."
 }

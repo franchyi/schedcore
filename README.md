@@ -50,7 +50,7 @@ workloads/
 ├── redis/               # Redis workload + redis_aware BPF scheduler
 └── nginx/               # Nginx workload + nginx_aware BPF scheduler
 
-mcp/new_sched/           # BPF compilation (Makefile + loader)
+bpf_loader/           # BPF compilation (Makefile + loader)
 scheduler/scx/           # sched-ext framework headers (git submodule)
 document/                # Research documentation
 ```
@@ -67,7 +67,7 @@ document/                # Research documentation
 
 ```bash
 git submodule update --init --recursive scheduler/scx
-make   # builds mcp/new_sched/loader
+make   # builds bpf_loader/loader
 ```
 
 ### Run an Experiment (db_sim example)
@@ -79,7 +79,7 @@ cd workloads/db_sim && make
 ./db_sim -q 8 -c 24 -d 15
 
 # With application-aware scheduler
-sudo ../../mcp/new_sched/loader ./db_aware.bpf.o &
+sudo ../../bpf_loader/loader ./db_aware.bpf.o &
 ./db_sim -q 8 -c 24 -d 15
 sudo pkill -f "loader.*db_aware"
 ```

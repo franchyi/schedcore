@@ -6,9 +6,9 @@ CLANG = clang
 
 # Project root (for SCX includes)
 PROJECT_ROOT = $(shell git rev-parse --show-toplevel)
-LOADER_DIR = $(PROJECT_ROOT)/mcp/new_sched
+LOADER_DIR = $(PROJECT_ROOT)/bpf_loader
 
-# SCX include paths (same as mcp/new_sched/Makefile)
+# SCX include paths (same as bpf_loader/Makefile)
 SCX_INCLUDES = \
 	-I$(PROJECT_ROOT)/scheduler/scx/scheds/include \
 	-I$(PROJECT_ROOT)/scheduler/scx/scheds/include/scx \

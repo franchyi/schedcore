@@ -52,7 +52,7 @@ schedcp/
 │       ├── nginx_bench_compare.sh # Self-contained A/B benchmark
 │       └── nginx.conf             # Nginx config template (16 workers)
 │
-├── mcp/new_sched/                 # BPF compilation infrastructure
+├── bpf_loader/                 # BPF compilation infrastructure
 │   ├── loader                     # BPF loader binary
 │   ├── Makefile                   # BPF compilation flags and include paths
 │   └── *.bpf.{c,o}               # Custom scheduler sources and compiled objects
@@ -113,7 +113,7 @@ return (comm[0] == 'r' && comm[1] == 'o' && comm[2] == 'c' &&
 ### Custom BPF Schedulers
 ```bash
 # Compile a custom BPF scheduler (from any workload directory)
-make -f ../../mcp/new_sched/Makefile BPF_SRC=scheduler.bpf.c \
+make -f ../../bpf_loader/Makefile BPF_SRC=scheduler.bpf.c \
      BPF_OBJ=scheduler.bpf.o scheduler.bpf.o
 
 # Or from workloads/db_sim with its own Makefile
@@ -138,7 +138,7 @@ cd workloads/rocksdb/rocksdb && make db_bench -j$(nproc)
 ./workload_binary [args] > /tmp/cfs_results.txt
 
 # 2. Start custom scheduler
-sudo ../../mcp/new_sched/loader ./scheduler.bpf.o &
+sudo ../../bpf_loader/loader ./scheduler.bpf.o &
 
 # 3. Run same workload under custom scheduler
 ./workload_binary [args] > /tmp/custom_results.txt
@@ -157,7 +157,7 @@ cd workloads/db_sim
 ./db_sim -q 8 -c 24 -d 15
 
 # With db_aware scheduler
-sudo ../../mcp/new_sched/loader ./db_aware.bpf.o &
+sudo ../../bpf_loader/loader ./db_aware.bpf.o &
 ./db_sim -q 8 -c 24 -d 15
 sudo pkill -f "loader.*db_aware"
 ```
@@ -178,7 +178,7 @@ rocksdb/db_bench --benchmarks=readrandom --db=/tmp/rocksdb_bench_test \
     --max_background_compactions=16 --statistics=1 --histogram=1
 
 # With rocksdb_aware scheduler
-sudo ../../mcp/new_sched/loader ./rocksdb_aware.bpf.o &
+sudo ../../bpf_loader/loader ./rocksdb_aware.bpf.o &
 rocksdb/db_bench --benchmarks=readrandom --db=/tmp/rocksdb_bench_test \
     --use_existing_db=1 --duration=30 --threads=16 \
     --max_background_compactions=16 --statistics=1 --histogram=1
@@ -190,7 +190,7 @@ sudo pkill -f "loader.*rocksdb_aware"
 cd workloads/nginx
 
 # Compile BPF scheduler
-make -f ../../mcp/new_sched/Makefile BPF_SRC=nginx_aware.bpf.c \
+make -f ../../bpf_loader/Makefile BPF_SRC=nginx_aware.bpf.c \
      BPF_OBJ=nginx_aware.bpf.o nginx_aware.bpf.o
 
 # Automated A/B benchmark (builds nginx + wrk2 if needed, runs everything)
@@ -208,7 +208,7 @@ sudo ./nginx_bench_compare.sh 3
    - Background threads → custom `BACKGROUND_DSQ` (low priority, long slice)
    - Foreground threads → `SCX_DSQ_GLOBAL` (framework fast path, minimal overhead)
    - Idle CPU fast path → `SCX_DSQ_LOCAL` in `select_cpu`
-5. Compile with: `make -f ../../mcp/new_sched/Makefile BPF_SRC=... BPF_OBJ=...`
+5. Compile with: `make -f ../../bpf_loader/Makefile BPF_SRC=... BPF_OBJ=...`
 6. Write benchmark script following `db_sim_bench.py` or `redis_bench_compare.sh` patterns
 7. Run A/B test: CFS baseline vs custom scheduler
 8. Report: P50, P99, P99.9, P99.99, max latency, throughput
@@ -232,4 +232,4 @@ sudo ./nginx_bench_compare.sh 3
 
 - `document/IMPLEMENTATION_PLAN.md` — Full research plan, design evolution (v1→v6), all results
 - `document/future_plan.md` — Research roadmap
-- `mcp/new_sched/Makefile` — BPF compilation flags and include paths
+- `bpf_loader/Makefile` — BPF compilation flags and include paths

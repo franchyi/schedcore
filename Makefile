@@ -1,2 +1,2 @@
 build:
-	make -C mcp/new_sched
+	make -C bpf_loader

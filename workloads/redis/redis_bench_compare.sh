@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REDIS_SERVER="$SCRIPT_DIR/redis-src/src/redis-server"
 REDIS_CLI="$SCRIPT_DIR/redis-src/src/redis-cli"
 REDIS_BENCHMARK="$SCRIPT_DIR/redis-src/src/redis-benchmark"
-LOADER="$SCRIPT_DIR/../../mcp/new_sched/loader"
+LOADER="$SCRIPT_DIR/../../bpf_loader/loader"
 SCHEDULER_OBJ="$SCRIPT_DIR/redis_aware.bpf.o"
 RESULTS_DIR="$SCRIPT_DIR/results"
 
