@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-db_sim benchmark: Compare query latency across CFS, scx_bpfland, and db_aware.
+db_sim benchmark: Compare query latency under CFS vs db_aware scheduler.
 
 Runs db_sim under each scheduler configuration and generates comparison
 results (JSON + chart).
@@ -21,7 +21,6 @@ PROJECT_ROOT = subprocess.check_output(
 DB_SIM = os.path.join(SCRIPT_DIR, "db_sim")
 DB_AWARE_BPF = os.path.join(SCRIPT_DIR, "db_aware.bpf.o")
 LOADER = os.path.join(PROJECT_ROOT, "bpf_loader", "loader")
-SCHED_BIN = os.path.expanduser("~/.schedcp/scxbin")
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -56,30 +55,6 @@ def run_db_sim():
     except Exception as e:
         print(f"  Error running db_sim: {e}")
         return None
-
-
-def start_builtin_scheduler(name):
-    """Start a built-in scx scheduler. Returns process or None."""
-    sched_bin = os.path.join(SCHED_BIN, name)
-    if not os.path.exists(sched_bin):
-        print(f"  Binary not found: {sched_bin}")
-        return None
-
-    print(f"  Starting {name}...")
-    proc = subprocess.Popen(
-        ["sudo", sched_bin],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        preexec_fn=os.setsid,
-    )
-    time.sleep(3)
-
-    if proc.poll() is not None:
-        stderr = proc.stderr.read().decode()
-        print(f"  Scheduler exited early: {stderr[:200]}")
-        return None
-
-    return proc
 
 
 def start_custom_scheduler():
@@ -244,7 +219,6 @@ def main():
 
     configs = [
         ("CFS (default)", None),
-        ("scx_bpfland", lambda: start_builtin_scheduler("scx_bpfland")),
         ("db_aware", start_custom_scheduler),
     ]
 
