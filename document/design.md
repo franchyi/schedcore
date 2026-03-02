@@ -41,18 +41,23 @@ We present a **framework for building application-aware kernel schedulers**. Giv
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-| Stage | Input | Output | Method |
-|---|---|---|---|
-| **1. Thread Discovery** | Application source code | Thread Manifest (thread name → role) | Tree-sitter static extraction + LLM classification |
-| **2. Policy Selection** | Thread Manifest + workload profile | Scheduling pattern (asymmetric / selective preemption) | Decision framework based on contention level |
-| **3. Scheduler Construction** | Pattern + thread classification rules | BPF scheduler (`.bpf.c`) | Hand-written using reusable BPF patterns and `p->comm` classification |
-| **4. Validation** | BPF scheduler + workload | Performance comparison vs CFS | A/B benchmark: latency percentiles + throughput |
+| Stage | Input | Output | Method | Tool |
+|---|---|---|---|---|
+| **1. Thread Discovery** | Application source code | Thread Manifest (thread name → role) | Tree-sitter static extraction + LLM classification | `pipeline/run_stage1.sh` |
+| **1c. Dynamic Profiling** | Running application (PID) | Thread Manifest (behavioral) | eBPF tracepoints: sched_switch, sched_wakeup, syscall histogram | `pipeline/stage1c_dynamic_profiler.py` |
+| **2. Policy Selection** | Thread Manifest + workload profile | Scheduling pattern | Decision framework based on contention level | `pipeline/stage2_policy_select.py` |
+| **3. Scheduler Construction** | Pattern + thread classification rules | BPF scheduler skeleton (`.bpf.c`) | Template-based generation from manifest + pattern | `pipeline/stage3_generate_scheduler.py` |
+| **4. Validation** | BPF scheduler + workload | Performance comparison vs CFS | A/B benchmark: latency percentiles + throughput | `pipeline/stage4_validate.py` |
 
 ### 2.2 Thread Discovery (Stage 1)
 
 The core automated component. Static analysis (tree-sitter) extracts all thread creation and naming sites from application source code. An LLM then classifies each thread type as foreground or background, producing a **Thread Manifest** — a structured JSON document mapping thread names to scheduling roles.
 
 The LLM's role is **thread discovery**, not scheduler generation. BPF schedulers are systems engineering, guided by the thread classification the pipeline provides.
+
+**Tools:** `pipeline/run_stage1.sh` (static + LLM), `pipeline/stage1a_static_analysis.py` (static only), `pipeline/stage1c_dynamic_profiler.py` (runtime eBPF profiling). The dynamic profiler supplements static analysis for applications without `pthread_setname_np` — it classifies threads by behavioral patterns (CPU burst time, sleep ratio, syscall histogram) observed at runtime.
+
+**Accuracy evaluation:** `pipeline/evaluate_accuracy.py` computes precision/recall/F1 for thread discovery by comparing generated manifests against ground-truth manifests in `pipeline/examples/`. Safety violations (foreground threads misclassified as background) are tracked separately from extra discoveries.
 
 ### 2.3 Policy Selection (Stage 2)
 
@@ -64,6 +69,8 @@ Given the Thread Manifest, the developer selects a scheduling pattern based on t
 | High (threads > CPUs, active background work) | **Selective preemption** — dual DSQ + per-CPU kick | Actively reclaims CPU from background for foreground |
 | External (contention from co-located processes) | **Asymmetric + task storage** — only deprioritize known CPU hogs | Isolate application from noisy neighbors |
 
+**Tool:** `python3 pipeline/stage2_policy_select.py <manifest.json> --threads N --cpus N [--external]` — reads the manifest, assesses thread/CPU ratio, and recommends a scheduling pattern with JSON configuration for Stage 3.
+
 ### 2.4 Scheduler Construction (Stage 3)
 
 The developer instantiates a BPF scheduler by combining:
@@ -73,9 +80,13 @@ The developer instantiates a BPF scheduler by combining:
 
 All schedulers classify threads by matching `task_struct->comm` (the kernel task name) using byte-by-byte comparison (BPF verifier disallows `strcmp`). Applications that set thread names via `pthread_setname_np()` or internal naming conventions are directly supported.
 
+**Tool:** `python3 pipeline/stage3_generate_scheduler.py <manifest.json> --pattern <pattern> --name <name> --output <path.bpf.c>` — generates a BPF scheduler skeleton from the manifest and selected pattern. The output is a starting point for developer refinement, not a finished product. Three template patterns are available: `simple_dual_dsq`, `selective_preemption`, and `asymmetric_task_storage`.
+
 ### 2.5 Validation (Stage 4)
 
 A/B benchmark comparing CFS baseline against the custom scheduler under the same workload and contention conditions. Standard metrics: P50, P99, P99.9, P99.99, max latency, and throughput. Each workload includes an automated benchmark script that runs multiple iterations.
+
+**Tool:** `python3 pipeline/stage4_validate.py --summary` — parses benchmark results from all workloads into a unified format and prints a comparison table. Supports per-workload parsing and JSON output. Each workload's benchmark script stays as-is; the harness normalizes their output formats.
 
 ---
 

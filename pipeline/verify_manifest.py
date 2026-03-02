@@ -53,6 +53,52 @@ def normalize_threads(manifest):
     return bg_threads, fg_threads
 
 
+def compute_metrics(generated, ground_truth):
+    """Compute precision/recall/F1 for background thread classification.
+
+    Returns dict with:
+      - true_positives: bg threads correctly identified
+      - false_negatives: gt bg threads not discovered
+      - safety_violations: gt foreground threads misclassified as bg (critical)
+      - extra_discoveries: bg threads not in gt at all (non-critical)
+      - precision, recall, f1: standard metrics
+    """
+    gen_bg, gen_fg = normalize_threads(generated)
+    gt_bg, gt_fg = normalize_threads(ground_truth)
+
+    # Deduplicate (e.g., redis has 3 bio_* entries with same key)
+    gt_bg_unique = {k: v for k, v in gt_bg.items()}
+
+    # True positives: bg in both generated and ground truth
+    tp = len(set(gen_bg.keys()) & set(gt_bg_unique.keys()))
+
+    # False negatives: gt bg not discovered
+    fn = len(set(gt_bg_unique.keys()) - set(gen_bg.keys()))
+
+    # Safety violations: gt foreground misclassified as bg
+    safety = len(set(gt_fg.keys()) & set(gen_bg.keys()))
+
+    # Extra discoveries: gen bg not in gt at all (not fg either)
+    all_gt_keys = set(gt_bg_unique.keys()) | set(gt_fg.keys())
+    extra = len(set(gen_bg.keys()) - all_gt_keys)
+
+    # Precision = TP / (TP + FP), where FP = safety_violations + extra
+    fp = safety + extra
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 1.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    return {
+        "true_positives": tp,
+        "false_negatives": fn,
+        "safety_violations": safety,
+        "extra_discoveries": extra,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
+
 def compare_manifests(generated, ground_truth):
     """Compare generated manifest against ground truth. Returns (pass_count, fail_count, messages)."""
     passes = 0
@@ -157,6 +203,17 @@ def compare_manifests(generated, ground_truth):
     for t in generated.get("threads", []):
         ident = t.get("identification", {})
         messages.append(("INFO", f"  [{t['role'].upper():10s}] {t['name_pattern']:25s} type={ident.get('type')} prefix='{ident.get('comm_prefix')}' len={ident.get('comm_length')}"))
+
+    # Compute and append quantitative metrics
+    metrics = compute_metrics(generated, ground_truth)
+    messages.append(("INFO", "--- Quantitative Metrics ---"))
+    messages.append(("INFO", f"  True Positives:    {metrics['true_positives']}"))
+    messages.append(("INFO", f"  False Negatives:   {metrics['false_negatives']}"))
+    messages.append(("INFO", f"  Safety Violations: {metrics['safety_violations']} (foreground→background misclassification)"))
+    messages.append(("INFO", f"  Extra Discoveries: {metrics['extra_discoveries']} (unknown→background, non-critical)"))
+    messages.append(("INFO", f"  Precision: {metrics['precision']:.3f}  Recall: {metrics['recall']:.3f}  F1: {metrics['f1']:.3f}"))
+    if metrics["safety_violations"] > 0:
+        messages.append(("FAIL", f"  {metrics['safety_violations']} SAFETY VIOLATION(S): foreground threads would be deprioritized!"))
 
     return passes, fails, warnings, messages
 

@@ -31,11 +31,16 @@ See `document/design.md` for full design, framework architecture, and evaluation
 ## Directory Structure
 
 ```
-├── pipeline/                      # Stage 1: LLM-driven thread discovery
+├── pipeline/                      # Framework pipeline tooling
 │   ├── stage1a_static_analysis.py # Tree-sitter thread extraction (deterministic)
 │   ├── stage1_thread_discovery.prompt.md  # LLM classification prompt template
 │   ├── run_stage1.sh              # Pipeline runner (Stage 1a → 1b)
+│   ├── stage1c_dynamic_profiler.py # Runtime eBPF thread behavior profiler
 │   ├── verify_manifest.py         # Result validation against ground truth
+│   ├── evaluate_accuracy.py       # Batch precision/recall/F1 evaluation
+│   ├── stage2_policy_select.py    # Policy selection (contention → pattern)
+│   ├── stage3_generate_scheduler.py # BPF skeleton generator (manifest → .bpf.c)
+│   ├── stage4_validate.py         # Unified validation harness (parse benchmarks)
 │   ├── thread_manifest.schema.json # Thread Manifest JSON schema
 │   ├── examples/                  # Ground-truth thread manifests
 │   └── results/                   # Generated pipeline outputs
@@ -208,16 +213,43 @@ sudo ./nginx_bench_compare.sh 3
 
 Follow the framework pipeline:
 
-1. **Thread Discovery (Stage 1):** `./pipeline/run_stage1.sh <app_name> <source_path> <language> <description>`
-2. **Policy Selection (Stage 2):** Review the Thread Manifest, assess contention level, choose scheduling pattern
-3. **Scheduler Construction (Stage 3):** Write a BPF scheduler (`.bpf.c`) using the selected pattern:
-   - Background threads → custom `BACKGROUND_DSQ` (low priority, long slice)
-   - Foreground threads → `SCX_DSQ_GLOBAL` (framework fast path) or `FOREGROUND_DSQ` (if selective preemption needed)
-   - Idle CPU fast path → `SCX_DSQ_LOCAL` in `select_cpu`
-4. **Validation (Stage 4):** Compile, write benchmark script, run A/B test
-   - Compile: `make -f ../../bpf_loader/Makefile BPF_SRC=... BPF_OBJ=...`
-   - Benchmark: follow `db_sim_bench.py` or `redis_bench_compare.sh` patterns
-   - Report: P50, P99, P99.9, P99.99, max latency, throughput
+1. **Thread Discovery (Stage 1):**
+   ```bash
+   # Static analysis + LLM classification
+   ./pipeline/run_stage1.sh <app_name> <source_path> <language> <description>
+
+   # Or: runtime eBPF profiling (for apps without pthread_setname_np)
+   sudo python3 pipeline/stage1c_dynamic_profiler.py --pid <pid> --duration 30 \
+       --app-name <name> --output pipeline/results/<name>_manifest.json
+
+   # Evaluate accuracy against ground truth
+   python3 pipeline/evaluate_accuracy.py
+   ```
+2. **Policy Selection (Stage 2):**
+   ```bash
+   python3 pipeline/stage2_policy_select.py pipeline/results/<name>_manifest.json \
+       --threads <N> --cpus <N> [--external]
+   ```
+3. **Scheduler Construction (Stage 3):** Generate a skeleton, then refine:
+   ```bash
+   # Generate BPF skeleton from manifest + pattern
+   python3 pipeline/stage3_generate_scheduler.py pipeline/results/<name>_manifest.json \
+       --pattern <selective_preemption|simple_dual_dsq|asymmetric_task_storage> \
+       --name <name>_aware --output workloads/<name>/<name>_aware.bpf.c
+
+   # Compile
+   make -f bpf_loader/Makefile BPF_SRC=workloads/<name>/<name>_aware.bpf.c \
+       BPF_OBJ=workloads/<name>/<name>_aware.bpf.o workloads/<name>/<name>_aware.bpf.o
+   ```
+4. **Validation (Stage 4):** Run A/B benchmark, then view unified results:
+   ```bash
+   # Run workload-specific benchmark script (see existing examples)
+   # Then parse results into unified format
+   python3 pipeline/stage4_validate.py --workload <name>
+
+   # Or view all workloads
+   python3 pipeline/stage4_validate.py --summary
+   ```
 
 ### Design Guidelines for Custom Schedulers
 
