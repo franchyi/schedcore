@@ -17,7 +17,7 @@ The LLM's role is **thread discovery**, not scheduler generation. BPF schedulers
 | **Redis** (GET/SET + persistence) | `redis_aware` | **76% P99 reduction** (GET), 72% P99 reduction (SET), +15-20% throughput |
 | **Nginx** (HTTP + CPU oversubscription) | `nginx_aware` v3 | **83% P99 reduction**, 87% P99.9 reduction, 0% throughput impact |
 
-See `document/IMPLEMENTATION_PLAN.md` for full evaluation results and design evolution.
+See `document/design.md` for full evaluation results and design evolution.
 
 ## Directory Structure
 
@@ -60,7 +60,7 @@ schedcp/
 ├── scheduler/scx/                 # sched-ext framework (git submodule, headers only)
 │
 └── document/
-    ├── IMPLEMENTATION_PLAN.md     # Full research plan, design, and results
+    ├── design.md                  # Design and evaluation results
     ├── future_plan.md             # Research roadmap
     └── 2509.01245v2.pdf/txt       # Research paper
 ```
@@ -228,6 +228,6 @@ sudo ./nginx_bench_compare.sh 3
 
 ## Key References
 
-- `document/IMPLEMENTATION_PLAN.md` — Full research plan, design evolution (v1→v6), all results
+- `document/design.md` — Scheduler designs, design evolution, and evaluation results
 - `document/future_plan.md` — Research roadmap
 - `bpf_loader/Makefile` — BPF compilation flags and include paths

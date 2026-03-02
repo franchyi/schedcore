@@ -84,7 +84,7 @@ sudo ../../bpf_loader/loader ./db_aware.bpf.o &
 sudo pkill -f "loader.*db_aware"
 ```
 
-See [IMPLEMENTATION_PLAN.md](document/IMPLEMENTATION_PLAN.md) for full experiment details, design evolution, and all results.
+See [design.md](document/design.md) for full experiment details, design evolution, and all results.
 
 ## License
 
