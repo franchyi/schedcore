@@ -8,10 +8,11 @@
  * - select_cpu preemption: when foreground wakes with no idle CPU, kick a bg CPU
  * - dispatch() drains foreground first, then background
  *
- * Thread classification (from Redis source bio.c, iothread.c):
+ * Thread classification (from Redis source bio.c, iothread.c, deps/jemalloc):
  *   "bio_*"        -> background (bio_close_file, bio_aof, bio_lazy_free)
  *   "redis-rdb*"   -> background (BGSAVE forked child)
  *   "redis-aof*"   -> background (BGREWRITEAOF forked child)
+ *   "jemalloc*"    -> background (jemalloc_bg_thd memory purging)
  *   everything else -> foreground (main event loop, io_thd_*, clients)
  */
 #include <scx/common.bpf.h>
@@ -70,6 +71,12 @@ static bool is_redis_background(struct task_struct *p)
 	if (comm[0] == 'r' && comm[1] == 'e' && comm[2] == 'd' &&
 	    comm[3] == 'i' && comm[4] == 's' && comm[5] == '-' &&
 	    comm[6] == 'a')
+		return true;
+
+	/* jemalloc_bg_thd — match "jemalloc" prefix */
+	if (comm[0] == 'j' && comm[1] == 'e' && comm[2] == 'm' &&
+	    comm[3] == 'a' && comm[4] == 'l' && comm[5] == 'l' &&
+	    comm[6] == 'o' && comm[7] == 'c')
 		return true;
 
 	return false;

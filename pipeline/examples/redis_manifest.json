@@ -4,7 +4,7 @@
   "language": "c",
   "identification_method": "comm",
   "default_role": "foreground",
-  "rationale": "Redis uses a single-threaded event loop for request handling but spawns background threads and child processes for persistence operations. BIO (Background I/O) threads handle deferred close, AOF fsync, and lazy-free operations. BGSAVE and BGREWRITEAOF fork child processes for RDB snapshots and AOF rewriting. These background operations are CPU and I/O intensive and can cause latency spikes for the main event loop and I/O threads when they compete for CPU time. Deprioritizing background threads ensures the event loop and I/O threads maintain low latency.",
+  "rationale": "Redis uses a single-threaded event loop for request handling but spawns background threads and child processes for persistence operations. BIO (Background I/O) threads handle deferred close, AOF fsync, and lazy-free operations. BGSAVE and BGREWRITEAOF fork child processes for RDB snapshots and AOF rewriting. Jemalloc (Redis's memory allocator) spawns background threads for asynchronous memory purging. These background operations are CPU and I/O intensive and can cause latency spikes for the main event loop and I/O threads when they compete for CPU time. Deprioritizing background threads ensures the event loop and I/O threads maintain low latency.",
   "threads": [
     {
       "name_pattern": "bio_close*",
@@ -62,6 +62,18 @@
         "type": "comm_prefix",
         "comm_prefix": "redis-a",
         "comm_length": 7,
+        "function_symbol": null,
+        "library_path": null
+      }
+    },
+    {
+      "name_pattern": "jemalloc_bg_thd",
+      "role": "background",
+      "purpose": "Jemalloc memory allocator background thread for asynchronous memory purging and deferred arena work. Spawned by jemalloc when background thread support is enabled. Count scales with CPU count. CPU-bound memory management that can tolerate scheduling delay.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "jemalloc",
+        "comm_length": 8,
         "function_symbol": null,
         "library_path": null
       }

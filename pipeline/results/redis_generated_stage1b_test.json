@@ -57,6 +57,16 @@
       }
     },
     {
+      "name_pattern": "jemalloc_bg_thd",
+      "role": "background",
+      "purpose": "Jemalloc memory allocator background thread for asynchronous memory purging and deferred arena work. Discovered via runtime eBPF profiling — invisible to static analysis since it originates from deps/jemalloc/.",
+      "identification": {
+        "type": "comm_prefix",
+        "comm_prefix": "jemalloc",
+        "comm_length": 8
+      }
+    },
+    {
       "name_pattern": "redis-server (main)",
       "role": "foreground",
       "purpose": "Main event loop thread. Handles all client connections, command parsing, and execution. Single-threaded request processing — any scheduling delay directly increases request latency.",
